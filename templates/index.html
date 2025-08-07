@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>All-in-One Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" xintegrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="flex">
+
+    <!-- Sidebar -->
+    <nav class="w-20 bg-gray-900 h-screen p-4 flex flex-col items-center justify-between">
+        <div>
+            <div class="text-blue-400 text-2xl mb-12"><i class="fas fa-brain"></i></div>
+            <ul class="space-y-6">
+                <li><a href="#" class="sidebar-icon active p-3 rounded-lg block text-center" data-target="dashboard"><i class="fas fa-tachometer-alt fa-lg"></i></a></li>
+                <li><a href="#" class="sidebar-icon p-3 rounded-lg block text-center" data-target="schedule"><i class="fas fa-calendar-check fa-lg"></i></a></li>
+                <li><a href="#" class="sidebar-icon p-3 rounded-lg block text-center" data-target="subjects"><i class="fas fa-book-medical fa-lg"></i></a></li>
+                <li><a href="#" class="sidebar-icon p-3 rounded-lg block text-center" data-target="courses"><i class="fas fa-chalkboard-teacher fa-lg"></i></a></li>
+                <li><a href="#" class="sidebar-icon p-3 rounded-lg block text-center" data-target="pomodoro"><i class="fas fa-clock fa-lg"></i></a></li>
+                <li><a href="#" class="sidebar-icon p-3 rounded-lg block text-center" data-target="gym"><i class="fas fa-dumbbell fa-lg"></i></a></li>
+                <li><a href="#" class="sidebar-icon p-3 rounded-lg block text-center" data-target="basketball"><i class="fas fa-basketball-ball fa-lg"></i></a></li>
+                <li><a href="#" class="sidebar-icon p-3 rounded-lg block text-center" data-target="planner"><i class="fas fa-calendar-alt fa-lg"></i></a></li>
+            </ul>
+        </div>
+        <div><a href="#" class="sidebar-icon p-3 rounded-lg block text-center" data-target="settings"><i class="fas fa-cog fa-lg"></i></a></div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="flex-1 p-6 sm:p-8 overflow-y-auto">
+        
+        <section id="dashboard" class="page">
+            <h1 class="text-3xl font-bold mb-6">Dashboard</h1>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Daily Goals</h2><p class="text-gray-400">Goal: <strong class="text-blue-400">2 lectures</strong> per day.</p><div class="mt-4"><p>Progress: <span id="dailyProgress">0</span> / 2</p><div class="w-full bg-gray-700 rounded-full h-2.5 mt-2"><div id="dailyProgressBar" class="bg-blue-500 h-2.5 rounded-full" style="width: 0%"></div></div></div></div>
+                <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Exam Countdown</h2><div id="examCountdownContainer"><p class="text-gray-400">Loading...</p></div></div>
+                <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Pomodoro Summary</h2><div class="flex justify-around text-center"><div><p class="text-2xl font-bold" id="pomodoroDaily">0h 0m</p><p class="text-gray-400">Today</p></div><div><p class="text-2xl font-bold" id="pomodoroWeekly">0h 0m</p><p class="text-gray-400">Week</p></div><div><p class="text-2xl font-bold" id="pomodoroMonthly">0h 0m</p><p class="text-gray-400">Month</p></div></div></div>
+                <div class="bg-gray-800 p-6 rounded-lg md:col-span-2 h-96"><h2 class="text-xl font-semibold mb-4">Weekly Study Hours</h2><canvas id="weeklyStudyChart"></canvas></div>
+                <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Weak Topics</h2><ul id="weakTopicsList" class="list-disc list-inside text-gray-400 space-y-2"><li>Loading...</li></ul><button id="addMistakeBtn" class="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Log Mistake</button></div>
+            </div>
+        </section>
+
+        <section id="schedule" class="page hidden">
+            <div class="flex justify-between items-center mb-6"><h1 class="text-3xl font-bold">Today's Schedule</h1><button id="addCustomEventBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add Event</button></div>
+            <div class="bg-gray-800 p-6 rounded-lg"><div class="pl-12"><div id="timeline-container" class="timeline-container"></div></div></div>
+        </section>
+
+        <section id="subjects" class="page hidden">
+            <h1 class="text-3xl font-bold mb-6">Subjects & Lectures</h1>
+            <div class="mb-6"><input type="text" id="newSubjectInput" class="bg-gray-700 border border-gray-600 rounded-lg py-2 px-4 w-full md:w-1/3" placeholder="New subject name..."><button id="addSubjectBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg ml-2">Add Subject</button></div>
+            <div id="subjectsContainer" class="space-y-8"><p class="text-gray-400">Loading subjects...</p></div>
+        </section>
+
+        <section id="courses" class="page hidden">
+            <h1 class="text-3xl font-bold mb-6">Course Planner</h1>
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-2 bg-gray-800 p-6 rounded-lg"><div class="flex justify-between items-center mb-4"><h2 class="text-xl font-semibold">Course Library</h2><button id="addCourseBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add Course</button></div><div id="courseLibraryContainer" class="grid grid-cols-1 md:grid-cols-2 gap-4"><p class="text-gray-400">Loading courses...</p></div></div>
+                <div class="space-y-6">
+                    <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Smart Scheduler</h2><div class="bg-gray-700 p-4 rounded-lg text-center"><i class="fas fa-lightbulb text-yellow-400 mb-2"></i><p>You have 45 free mins at 6 PM — do 1 AI course video.</p></div></div>
+                    <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Notifications</h2><div id="course-notifications" class="space-y-2 text-sm"><p class="text-gray-400"><i class="fas fa-bell text-blue-400"></i> You haven’t studied Radiology in 4 days.</p><p class="text-gray-400"><i class="fas fa-fire text-orange-500"></i> 5-day study streak! Keep it up!</p></div></div>
+                    <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Goals & Milestones</h2><div id="course-goals-container"></div></div>
+                </div>
+            </div>
+            <div class="mt-6 bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Weekly Course Planner</h2><div id="weekly-course-planner" class="grid grid-cols-7 gap-1 text-center text-xs"></div></div>
+        </section>
+
+        <section id="pomodoro" class="page hidden flex flex-col items-center justify-center h-full">
+             <div class="text-center">
+                <div class="pomodoro-dial mb-8" id="pomodoroDial"><div class="timer-display text-center"><div id="timer" class="text-6xl font-bold">25:00</div><div id="timer-status" class="text-lg text-gray-400">Stay Focused</div></div></div>
+                <div class="mb-6"><select id="pomodoroSubjectAssign" class="bg-gray-700 border border-gray-600 rounded-lg py-2 px-4"></select></div>
+                <div class="flex items-center justify-center space-x-8"><button id="resetTimerBtn" class="text-gray-400 hover:text-white text-2xl"><i class="fas fa-redo"></i></button><button id="startStopBtn" class="bg-blue-600 hover:bg-blue-700 text-white rounded-full w-20 h-20 flex items-center justify-center text-3xl"><i class="fas fa-play"></i></button><button id="skipBtn" class="text-gray-400 hover:text-white text-2xl"><i class="fas fa-forward"></i></button></div>
+                <div id="session-tracker" class="mt-6 text-lg">1 / 4 Sessions</div>
+            </div>
+        </section>
+        
+        <!-- Other sections (Gym, Basketball) are omitted for brevity but would follow the same pattern -->
+        <section id="gym" class="page hidden"><h1 class="text-3xl font-bold">Gym (Coming Soon)</h1></section>
+        <section id="basketball" class="page hidden"><h1 class="text-3xl font-bold">Basketball (Coming Soon)</h1></section>
+
+        <section id="planner" class="page hidden">
+            <h1 class="text-3xl font-bold mb-6">Exam Planner</h1>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Add Exam</h2><div class="space-y-4"><input type="text" id="examNameInput" class="bg-gray-700 w-full p-2 rounded" placeholder="Exam Name"><input type="date" id="examDateInput" class="bg-gray-700 w-full p-2 rounded"><button id="addExamBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add Exam</button></div></div>
+                <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Reverse Study Schedule</h2><div id="reverseScheduleContainer" class="text-gray-400"><p>Add an exam to generate a schedule.</p></div></div>
+            </div>
+        </section>
+
+        <section id="settings" class="page hidden">
+            <h1 class="text-3xl font-bold mb-6">Settings</h1>
+            <div class="bg-gray-800 p-6 rounded-lg max-w-md"><div class="flex items-center justify-between"><span class="text-lg">Dark Mode</span><label class="toggle-switch"><input type="checkbox" id="darkModeToggle" checked><span class="slider"></span></label></div></div>
+        </section>
+
+    </main>
+
+    <!-- Modals -->
+    <div id="flashcardModal" class="modal"></div><div id="mistakeModal" class="modal"></div><div id="courseModal" class="modal"></div><div id="customEventModal" class="modal"></div>
+    
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
