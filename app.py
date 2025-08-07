@@ -431,5 +431,17 @@ def add_bball_shot():
 def get_exams():
     return jsonify([to_dict(e) for e in Exam.query.order_by(Exam.date.asc()).all()])
 
+@app.route('/api/flashcards', methods=['POST'])
+def add_flashcard():
+    data = request.json
+    new_flashcard = Flashcard(subject_id=data['subject_id'], lecture_id=data['lecture_id'], front=data['front'], back=data['back'])
+    db.session.add(new_flashcard)
+    db.session.commit()
+    return jsonify(to_dict(new_flashcard)), 201
+
+@app.route('/api/schedule', methods=['GET'])
+def get_schedule():
+    return jsonify([to_dict(e) for e in CustomEvent.query.filter_by(event_date=date.today()).all()])
+
 if __name__ == '__main__':
     app.run(debug=True)
