@@ -17,7 +17,6 @@ DATABASE = 'db_abc901_elhaqom'
 app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{USER}:{PASSWORD}@{SERVER}/{DATABASE}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = False
-# FIX: Add pool recycling and pre-ping to prevent connection timeouts on Vercel
 app.config['SQLALCHEMY_POOL_RECYCLE'] = 240
 app.config['SQLALCHEMY_POOL_TIMEOUT'] = 20
 app.config['SQLALCHEMY_POOL_PRE_PING'] = True
@@ -128,9 +127,9 @@ class GymSessionLog(db.Model):
 
 class GymPlanner(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    day_of_week = db.Column(db.String(10), unique=True, nullable=False) # e.g., "Monday"
+    day_of_week = db.Column(db.String(10), unique=True, nullable=False)
     workout_name = db.Column(db.String(100))
-    exercise_ids = db.Column(db.JSON) # List of exercise IDs
+    exercise_ids = db.Column(db.JSON)
 
 class BasketballPlayer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -428,6 +427,9 @@ def add_bball_shot():
     db.session.commit()
     return jsonify(to_dict(new_shot)), 201
 
+@app.route('/api/exams', methods=['GET'])
+def get_exams():
+    return jsonify([to_dict(e) for e in Exam.query.order_by(Exam.date.asc()).all()])
+
 if __name__ == '__main__':
     app.run(debug=True)
- 
