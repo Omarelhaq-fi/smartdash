@@ -6,7 +6,9 @@
     <title>All-in-One Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- jsPDF and jsPDF-AutoTable for PDF generation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" xintegrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
@@ -37,7 +39,27 @@
         <section id="dashboard" class="page">
             <h1 class="text-3xl font-bold mb-6">Dashboard</h1>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Daily Goals</h2><p class="text-gray-400">Goal: <strong class="text-blue-400">2 lectures</strong> per day.</p><div class="mt-4"><p>Progress: <span id="dailyProgress">0</span> / 2</p><div class="w-full bg-gray-700 rounded-full h-2.5 mt-2"><div id="dailyProgressBar" class="bg-blue-500 h-2.5 rounded-full" style="width: 0%"></div></div></div></div>
+                <!-- Daily Goals -->
+                <div class="bg-gray-800 p-6 rounded-lg">
+                    <h2 class="text-xl font-semibold mb-4">Daily Goals</h2>
+                    <div id="dailyGoalsContainer" class="space-y-4">
+                        <!-- Lectures Goal -->
+                        <div id="lectureGoal">
+                            <p class="flex justify-between"><span>Lectures</span> <span id="lectureProgress">0/2</span></p>
+                            <div class="w-full bg-gray-700 rounded-full h-2.5 mt-1"><div id="lectureProgressBar" class="bg-blue-500 h-2.5 rounded-full" style="width: 0%"></div></div>
+                        </div>
+                        <!-- Gym Goal -->
+                        <div id="gymGoal">
+                            <p class="flex justify-between"><span>Gym</span> <span id="gymProgress">0/1</span></p>
+                            <div class="w-full bg-gray-700 rounded-full h-2.5 mt-1"><div id="gymProgressBar" class="bg-green-500 h-2.5 rounded-full" style="width: 0%"></div></div>
+                        </div>
+                        <!-- Courses Goal -->
+                        <div id="courseGoal">
+                            <p class="flex justify-between"><span>Courses</span> <span id="courseProgress">0/1</span></p>
+                            <div class="w-full bg-gray-700 rounded-full h-2.5 mt-1"><div id="courseProgressBar" class="bg-purple-500 h-2.5 rounded-full" style="width: 0%"></div></div>
+                        </div>
+                    </div>
+                </div>
                 <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Exam Countdown</h2><div id="examCountdownContainer"><p class="text-gray-400">Loading...</p></div></div>
                 <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Pomodoro Summary</h2><div class="flex justify-around text-center"><div><p class="text-2xl font-bold" id="pomodoroDaily">0h 0m</p><p class="text-gray-400">Today</p></div><div><p class="text-2xl font-bold" id="pomodoroWeekly">0h 0m</p><p class="text-gray-400">Week</p></div><div><p class="text-2xl font-bold" id="pomodoroMonthly">0h 0m</p><p class="text-gray-400">Month</p></div></div></div>
                 <div class="bg-gray-800 p-6 rounded-lg md:col-span-2 h-96"><h2 class="text-xl font-semibold mb-4">Weekly Study Hours</h2><canvas id="weeklyStudyChart"></canvas></div>
@@ -128,4 +150,3 @@
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
-       
