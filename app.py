@@ -344,7 +344,7 @@ def get_todays_workout():
         
     return jsonify({'name': plan.workout_name, 'exercises': result_exercises})
 
-# --- Other Routes ---
+# --- Other Routes (FIXED SYNTAX) ---
 @app.route('/api/pomodoro', methods=['POST'])
 def log_pomodoro():
     data = request.json
