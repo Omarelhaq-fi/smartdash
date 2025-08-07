@@ -1,329 +1,367 @@
-document.addEventListener('DOMContentLoaded', function() {
-    // --- STATE & UI SELECTORS ---
-    let weeklyChart, currentFlashcardState = {}, tempShotData = {};
-    const pages = document.querySelectorAll('.page');
-    const navLinks = document.querySelectorAll('.sidebar-icon');
-    const darkModeToggle = document.getElementById('darkModeToggle');
+# app.py
+import os
+from flask import Flask, render_template, jsonify, request
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.sql import func
+from datetime import datetime, date, timedelta
 
-    // --- API HELPER ---
-    async function apiRequest(url, method = 'GET', body = null) {
-        const options = { method, headers: { 'Content-Type': 'application/json' } };
-        if (body) options.body = JSON.stringify(body);
-        try {
-            const response = await fetch(url, options);
-            const contentType = response.headers.get("content-type");
+app = Flask(__name__)
 
-            if (!response.ok) {
-                let errorData;
-                if (contentType && contentType.indexOf("application/json") !== -1) {
-                    errorData = await response.json();
-                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-                } else {
-                    const errorText = await response.text();
-                    throw new Error(`Server returned a non-JSON error (status: ${response.status}): ${errorText.substring(0, 200)}...`);
-                }
-            }
-            
-            if (contentType && contentType.indexOf("application/json") !== -1) {
-                return response.json();
-            } else {
-                return; 
-            }
-        } catch (error) {
-            console.error(`API request failed: ${method} ${url}`, error);
-            alert(`Error: ${error.message}`);
-            throw error;
-        }
-    }
+# --- Database Configuration ---
+USER = 'abc901_elhaqom'
+PASSWORD = 'omarreda123'
+SERVER = 'mysql6013.site4now.net'
+DATABASE = 'db_abc901_elhaqom'
 
-    // --- CORE APP LOGIC ---
-    function setupNavigation() {
-        navLinks.forEach(link => {
-            link.addEventListener('click', (e) => {
-                e.preventDefault();
-                const targetId = link.dataset.target;
-                pages.forEach(page => page.classList.add('hidden'));
-                document.getElementById(targetId).classList.remove('hidden');
-                navLinks.forEach(nav => nav.classList.remove('active'));
-                link.classList.add('active');
-                loadPageData(targetId);
-            });
-        });
-        setupTabNavigation('.gym-tab', '.gym-pane', 'gym');
-        setupTabNavigation('.bball-tab', '.bball-pane', 'basketball');
-    }
+app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{USER}:{PASSWORD}@{SERVER}/{DATABASE}'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ECHO'] = False # Set to True to see generated SQL in your terminal
+
+db = SQLAlchemy(app)
+
+# --- Database Models ---
+
+class Subject(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    lectures = db.relationship('Lecture', backref='subject', lazy=True, cascade="all, delete-orphan")
+    flashcards = db.relationship('Flashcard', backref='subject', lazy=True, cascade="all, delete-orphan")
+    mistakes = db.relationship('Mistake', backref='subject', lazy=True, cascade="all, delete-orphan")
+
+class Lecture(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=False)
+    lecture_number = db.Column(db.Integer, nullable=False)
+    uni_lecs = db.Column(db.Integer, default=1)
+    studied = db.Column(db.Integer, default=0)
+    revised = db.Column(db.Boolean, default=False)
+    total_time = db.Column(db.Integer, default=0) # in seconds
+
+class Flashcard(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=False)
+    lecture_id = db.Column(db.Integer, nullable=False) # Maps to lecture_number
+    front = db.Column(db.Text, nullable=False)
+    back = db.Column(db.Text, nullable=False)
+
+class Exam(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+
+class Mistake(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    topic = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=False)
+
+class PomodoroLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.DateTime, default=datetime.utcnow)
+    duration = db.Column(db.Integer, nullable=False) # in seconds
+    subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=True)
+    lecture_id = db.Column(db.Integer, nullable=True) # Maps to lecture_number
+
+class Course(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(150), nullable=False)
+    platform = db.Column(db.String(100))
+    category = db.Column(db.String(100))
+    total_units = db.Column(db.Integer, default=0)
+    completed_units = db.Column(db.Integer, default=0)
+    target_date = db.Column(db.Date, nullable=True)
+    sessions_per_week = db.Column(db.Integer, default=1)
+
+class CustomEvent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(150), nullable=False)
+    start_time = db.Column(db.Time, nullable=False)
+    end_time = db.Column(db.Time, nullable=False)
+    event_date = db.Column(db.Date, default=date.today)
+    color = db.Column(db.String(20), default='purple')
+
+# --- Gym Models ---
+class Exercise(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    group = db.Column(db.String(50))
+    cues = db.Column(db.String(255))
+    tags = db.Column(db.JSON) # Store tags as a JSON array
+    prs = db.relationship('PR', backref='exercise', lazy=True, cascade="all, delete-orphan")
+
+class PR(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    exercise_id = db.Column(db.Integer, db.ForeignKey('exercise.id'), nullable=False)
+    weight = db.Column(db.Float, nullable=False)
+    reps = db.Column(db.Integer, nullable=False)
+    date = db.Column(db.Date, default=date.today)
+
+# --- Basketball Models ---
+class BasketballPlayer(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+
+class VideoTag(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    time = db.Column(db.Float, nullable=False)
+    player_id = db.Column(db.Integer, db.ForeignKey('basketball_player.id'), nullable=False)
+    category = db.Column(db.String(100))
+    action = db.Column(db.String(100))
+    stat_type = db.Column(db.String(50))
+    player = db.relationship('BasketballPlayer')
+
+class Shot(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    x = db.Column(db.Float, nullable=False)
+    y = db.Column(db.Float, nullable=False)
+    made = db.Column(db.Boolean, nullable=False)
+    player_id = db.Column(db.Integer, db.ForeignKey('basketball_player.id'), nullable=False)
+    player = db.relationship('BasketballPlayer')
+
+
+# --- Helper Functions ---
+def to_dict(model_instance):
+    if model_instance is None: return None
+    d = {}
+    for column in model_instance.__table__.columns:
+        value = getattr(model_instance, column.name)
+        if isinstance(value, (datetime, date, db.Model.metadata.tables['custom_event'].c.start_time.type.python_type)):
+            value = value.isoformat()
+        d[column.name] = value
+    return d
+
+def ensure_default_player_exists():
+    """Checks for a default player and creates one if not found. This prevents crashes."""
+    if not BasketballPlayer.query.first():
+        default_player = BasketballPlayer(name='Player 1')
+        db.session.add(default_player)
+        db.session.commit()
+
+# --- HTML Routes ---
+@app.route('/')
+def index():
+    with app.app_context():
+        db.create_all()
+        ensure_default_player_exists()
+    return render_template('index.html')
+
+# --- API Routes ---
+
+# Dashboard
+@app.route('/api/dashboard_metrics', methods=['GET'])
+def get_dashboard_metrics():
+    today = date.today()
+    start_of_week = today - timedelta(days=today.weekday())
+    start_of_month = today.replace(day=1)
+    daily_total = db.session.query(func.sum(PomodoroLog.duration)).filter(func.date(PomodoroLog.date) == today).scalar() or 0
+    weekly_total = db.session.query(func.sum(PomodoroLog.duration)).filter(PomodoroLog.date >= start_of_week).scalar() or 0
+    monthly_total = db.session.query(func.sum(PomodoroLog.duration)).filter(PomodoroLog.date >= start_of_month).scalar() or 0
+    exams = Exam.query.order_by(Exam.date.asc()).all()
+    weak_topics = Mistake.query.join(Subject).with_entities(Mistake.topic, Subject.name).limit(5).all()
+    return jsonify({
+        'pomodoro': {'daily': daily_total, 'weekly': weekly_total, 'monthly': monthly_total},
+        'exams': [to_dict(e) for e in exams],
+        'weak_topics': [{'topic': wt[0], 'subject_name': wt[1]} for wt in weak_topics]
+    })
+
+# Subjects & Lectures
+@app.route('/api/subjects', methods=['GET'])
+def get_subjects():
+    subjects = Subject.query.options(db.joinedload(Subject.lectures)).order_by(Subject.id).all()
+    result = []
+    for s in subjects:
+        subject_dict = to_dict(s)
+        subject_dict['lectures'] = sorted([to_dict(l) for l in s.lectures], key=lambda x: x['lecture_number'])
+        result.append(subject_dict)
+    return jsonify(result)
+
+@app.route('/api/subjects', methods=['POST'])
+def add_subject():
+    data = request.json
+    if not data or 'name' not in data or not data['name'].strip(): return jsonify({'error': 'Subject name is required'}), 400
+    if Subject.query.filter_by(name=data['name'].strip()).first(): return jsonify({'error': 'Subject with this name already exists'}), 409
+    new_subject = Subject(name=data['name'].strip())
+    db.session.add(new_subject)
+    db.session.commit()
+    return jsonify(to_dict(new_subject)), 201
+
+@app.route('/api/subjects/<int:subject_id>/lectures', methods=['POST'])
+def add_lecture(subject_id):
+    subject = Subject.query.get_or_404(subject_id)
+    last_lecture = Lecture.query.filter_by(subject_id=subject_id).order_by(Lecture.lecture_number.desc()).first()
+    new_lecture_number = (last_lecture.lecture_number + 1) if last_lecture else 1
+    new_lecture = Lecture(subject_id=subject.id, lecture_number=new_lecture_number)
+    db.session.add(new_lecture)
+    db.session.commit()
+    return jsonify(to_dict(new_lecture)), 201
+
+@app.route('/api/lectures/<int:lecture_id>', methods=['PUT'])
+def update_lecture(lecture_id):
+    data = request.json
+    lecture = Lecture.query.get_or_404(lecture_id)
+    lecture.uni_lecs = data.get('uni_lecs', lecture.uni_lecs)
+    lecture.studied = data.get('studied', lecture.studied)
+    lecture.revised = data.get('revised', lecture.revised)
+    db.session.commit()
+    return jsonify(to_dict(lecture))
+
+# Exams, Mistakes, Pomodoro, Courses, Schedule... (These routes are unchanged)
+@app.route('/api/exams', methods=['GET'])
+def get_exams():
+    return jsonify([to_dict(e) for e in Exam.query.order_by(Exam.date.asc()).all()])
+
+@app.route('/api/exams', methods=['POST'])
+def add_exam():
+    data = request.json
+    exam_date = datetime.strptime(data['date'], '%Y-%m-%d').date()
+    new_exam = Exam(name=data['name'], date=exam_date)
+    db.session.add(new_exam)
+    db.session.commit()
+    return jsonify(to_dict(new_exam)), 201
+
+@app.route('/api/mistakes', methods=['POST'])
+def add_mistake():
+    data = request.json
+    new_mistake = Mistake(topic=data['topic'], description=data['description'], subject_id=data['subject_id'])
+    db.session.add(new_mistake)
+    db.session.commit()
+    return jsonify(to_dict(new_mistake)), 201
+
+@app.route('/api/pomodoro', methods=['POST'])
+def log_pomodoro():
+    data = request.json
+    log = PomodoroLog(duration=data['duration'], subject_id=data.get('subject_id'), lecture_id=data.get('lecture_id'))
+    db.session.add(log)
+    if data.get('subject_id') and data.get('lecture_id'):
+        lecture = Lecture.query.filter_by(subject_id=data['subject_id'], lecture_number=data['lecture_id']).first()
+        if lecture: lecture.total_time += data['duration']
+    db.session.commit()
+    return jsonify(to_dict(log)), 201
+
+@app.route('/api/courses', methods=['GET'])
+def get_courses():
+    return jsonify([to_dict(c) for c in Course.query.all()])
+
+@app.route('/api/courses', methods=['POST'])
+def add_course():
+    data = request.json
+    new_course = Course(title=data.get('title'), platform=data.get('platform'), category=data.get('category'), total_units=data.get('total_units'), completed_units=data.get('completed_units'), target_date=datetime.strptime(data['target_date'], '%Y-%m-%d').date() if data.get('target_date') else None, sessions_per_week=data.get('sessions_per_week'))
+    db.session.add(new_course)
+    db.session.commit()
+    return jsonify(to_dict(new_course)), 201
+
+@app.route('/api/schedule', methods=['GET'])
+def get_schedule():
+    return jsonify([to_dict(e) for e in CustomEvent.query.filter_by(event_date=date.today()).all()])
+
+@app.route('/api/schedule', methods=['POST'])
+def add_custom_event():
+    data = request.json
+    start_time = datetime.strptime(data['start_time'], '%H:%M').time()
+    end_time = datetime.strptime(data['end_time'], '%H:%M').time()
+    new_event = CustomEvent(title=data.get('title'), start_time=start_time, end_time=end_time, color=data.get('color', 'purple'))
+    db.session.add(new_event)
+    db.session.commit()
+    return jsonify(to_dict(new_event)), 201
+
+@app.route('/api/subjects/<int:subject_id>/lectures/<int:lecture_id>/flashcards', methods=['GET'])
+def get_flashcards(subject_id, lecture_id):
+    return jsonify([to_dict(f) for f in Flashcard.query.filter_by(subject_id=subject_id, lecture_id=lecture_id).all()])
+
+@app.route('/api/flashcards', methods=['POST'])
+def add_flashcard():
+    data = request.json
+    new_flashcard = Flashcard(subject_id=data['subject_id'], lecture_id=data['lecture_id'], front=data['front'], back=data['back'])
+    db.session.add(new_flashcard)
+    db.session.commit()
+    return jsonify(to_dict(new_flashcard)), 201
+
+# --- Gym API Routes ---
+@app.route('/api/gym/exercises', methods=['GET'])
+def get_exercises():
+    return jsonify([to_dict(ex) for ex in Exercise.query.all()])
+
+@app.route('/api/gym/exercises', methods=['POST'])
+def add_exercise():
+    data = request.json
+    new_ex = Exercise(name=data['name'], group=data['group'], cues=data['cues'], tags=data['tags'])
+    db.session.add(new_ex)
+    db.session.commit()
+    return jsonify(to_dict(new_ex)), 201
+
+@app.route('/api/gym/prs', methods=['GET'])
+def get_prs():
+    prs = PR.query.join(Exercise).with_entities(PR, Exercise.name).order_by(PR.date.desc()).all()
+    result = []
+    for pr, ex_name in prs:
+        pr_dict = to_dict(pr)
+        pr_dict['exercise_name'] = ex_name
+        result.append(pr_dict)
+    return jsonify(result)
+
+# --- Basketball API Routes ---
+@app.route('/api/basketball/players', methods=['POST'])
+def add_bball_player():
+    data = request.json
+    if not data or 'name' not in data or not data['name'].strip():
+        return jsonify({'error': 'Player name is required'}), 400
+    name = data['name'].strip()
+    if BasketballPlayer.query.filter_by(name=name).first():
+        return jsonify({'error': 'Player with this name already exists'}), 409
+    new_player = BasketballPlayer(name=name)
+    db.session.add(new_player)
+    db.session.commit()
+    return jsonify(to_dict(new_player)), 201
+
+@app.route('/api/basketball/data', methods=['GET'])
+def get_bball_data():
+    players = BasketballPlayer.query.all()
+    tags = VideoTag.query.options(db.joinedload(VideoTag.player)).order_by(VideoTag.time).all()
+    shots = Shot.query.options(db.joinedload(Shot.player)).all()
     
-    function setupTabNavigation(tabSelector, paneSelector, parentPageId) {
-        const tabs = document.querySelectorAll(tabSelector);
-        tabs.forEach(tab => {
-            tab.addEventListener('click', e => {
-                e.preventDefault();
-                const targetId = tab.dataset.tabTarget;
-                document.querySelectorAll(paneSelector).forEach(pane => pane.classList.add('hidden'));
-                document.getElementById(targetId).classList.remove('hidden');
-                tabs.forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                loadTabData(parentPageId, targetId);
-            });
-        });
-    }
-
-    function loadPageData(pageId) {
-        switch(pageId) {
-            case 'dashboard': renderDashboardMetrics(); break;
-            case 'subjects': renderSubjects(); break;
-            case 'courses': renderCourses(); break;
-            case 'schedule': renderSchedule(); break;
-            case 'planner': renderExams(); break;
-            case 'pomodoro': renderPomodoroAssignments(); break;
-            case 'gym': loadTabData('gym', 'gym-today'); break;
-            case 'basketball': loadTabData('basketball', 'bball-stats'); break;
-        }
-    }
-
-    function loadTabData(parentPageId, tabId) {
-        if (parentPageId === 'gym') {
-            switch(tabId) {
-                case 'gym-today': renderTodaysWorkout(); break;
-                case 'gym-planner': renderGymPlanner(); break;
-                case 'gym-exercises': renderExerciseLibrary(); break;
-                case 'gym-prs': renderPrLog(); break;
-            }
-        } else if (parentPageId === 'basketball') {
-             switch(tabId) {
-                case 'bball-stats': renderPlayerStats(); break;
-                case 'bball-shot-chart': renderShotChart(); break;
-                case 'bball-lineups': renderLineupImpact(); break;
-                case 'bball-report': renderGameReport(); break;
-            }
-        }
-    }
-
-    darkModeToggle.addEventListener('change', () => {
-        document.documentElement.classList.toggle('dark');
-        renderDashboardMetrics();
-    });
-
-    // --- EVENT DELEGATION ---
-    document.body.addEventListener('click', handleGlobalClick);
-    document.body.addEventListener('change', handleGlobalChange);
-
-    function handleGlobalClick(e) {
-        if (e.target.classList.contains('modal')) {
-            e.target.style.display = 'none';
-            return;
-        }
-        
-        const targetButton = e.target.closest('button, a, .close-modal');
-        if (!targetButton && !e.target.closest('.flashcard') && e.target.id !== 'shot-chart-container') return;
-        
-        if (targetButton && targetButton.closest('.close-modal')) {
-             targetButton.closest('.modal').style.display = 'none';
-             return;
-        }
-        
-        const id = targetButton ? targetButton.id : (e.target.id || e.target.closest('.flashcard')?.id);
-
-        const actions = {
-            'addSubjectBtn': addSubject, 'addExamBtn': addExam, 'addMistakeBtn': openMistakeModal, 'saveMistakeBtn': saveMistake,
-            'addCourseBtn': openCourseModal, 'saveCourseBtn': saveCourse, 'addCustomEventBtn': openCustomEventModal, 'saveCustomEventBtn': saveCustomEvent,
-            'addExerciseBtn': openExerciseModal, 'saveExerciseBtn': saveExercise, 'import-video-btn': () => document.getElementById('video-upload').click(),
-            'add-tag-btn': openTaggingModal, 'saveTagBtn': saveTag, 'shot-made-btn': () => logShot(true), 'shot-missed-btn': () => logShot(false),
-            'flipFlashcard': () => document.querySelector('.flashcard').classList.toggle('is-flipped'), 'prevFlashcard': () => navigateFlashcard(-1), 'nextFlashcard': () => navigateFlashcard(1),
-            'addFlashcardBtn': addFlashcard, 'startStopBtn': () => isRunning ? stopTimer() : startTimer(), 'resetTimerBtn': resetTimer, 'skipBtn': () => switchMode(true),
-            'addPlayerBtn': addPlayer, // Added action for the new button
-        };
-
-        if (actions[id]) actions[id]();
-        else if (targetButton?.classList.contains('add-lecture')) addLecture(targetButton.dataset.subjectId);
-        else if (targetButton?.closest('.open-flashcards')) {
-            const subjectId = targetButton.closest('[data-subject-id]').dataset.subjectId;
-            const lectureId = targetButton.closest('[data-lecture-id]').dataset.lectureId;
-            openFlashcardModal(subjectId, lectureId);
-        } else if (targetButton?.classList.contains('edit-exercise-btn')) {
-            openExerciseModal(targetButton.dataset.exerciseId);
-        } else if (e.target.id === 'shot-chart-container') {
-            handleShotChartClick(e);
-        }
-    }
-
-    function handleGlobalChange(e) {
-        const target = e.target;
-        if (target.closest('.lecture-table-input')) updateLecture(target);
-        if (target.id === 'video-upload') importVideo(target);
-    }
-
-    // --- RENDER FUNCTIONS (Dashboard, Subjects, Courses etc. are mostly unchanged) ---
-    async function renderDashboardMetrics() {
-        const data = await apiRequest('/api/dashboard_metrics');
-        document.getElementById('pomodoroDaily').textContent = formatTime(data.pomodoro.daily, true);
-        document.getElementById('pomodoroWeekly').textContent = formatTime(data.pomodoro.weekly, true);
-        document.getElementById('pomodoroMonthly').textContent = formatTime(data.pomodoro.monthly, true);
-        const examContainer = document.getElementById('examCountdownContainer');
-        examContainer.innerHTML = data.exams.length === 0 ? '<p class="text-gray-400">No upcoming exams.</p>' : data.exams.map(exam => `<div class="mb-2"><p><strong>${exam.name}</strong> is in <span class="text-blue-400 font-bold">${Math.max(0, Math.ceil((new Date(exam.date) - new Date()) / (1000 * 60 * 60 * 24)))} days</span></p></div>`).join('');
-        const weakTopicsList = document.getElementById('weakTopicsList');
-        weakTopicsList.innerHTML = data.weak_topics.length === 0 ? '<li>No mistakes logged.</li>' : data.weak_topics.map(m => `<li>${m.topic} (${m.subject_name})</li>`).join('');
-        renderWeeklyChart();
-    }
+    stats = {p.id: {'name': p.name, 'FGM': 0, 'FGA': 0, 'AST': 0, 'PTS': 0} for p in players}
+    for tag in tags:
+        if tag.player_id not in stats: continue
+        if tag.stat_type == 'fga_made':
+            stats[tag.player_id]['FGM'] += 1
+            stats[tag.player_id]['FGA'] += 1
+        elif tag.stat_type == 'fga_missed':
+            stats[tag.player_id]['FGA'] += 1
+        elif tag.stat_type == 'ast':
+            stats[tag.player_id]['AST'] += 1
+    for p_id in stats:
+        stats[p_id]['PTS'] = stats[p_id]['FGM'] * 2
     
-    // Unchanged functions: renderWeeklyChart, renderSubjects, addSubject, addLecture, updateLecture, renderExams, addExam, generateReverseSchedule, openMistakeModal, saveMistake, Pomodoro functions, Flashcard functions, Course functions, Schedule functions...
-    function renderWeeklyChart() { const ctx = document.getElementById('weeklyStudyChart').getContext('2d'); const isDark = document.documentElement.classList.contains('dark'); const gridColor = isDark ? '#4a5568' : '#e2e8f0'; const textColor = isDark ? '#a0aec0' : '#4a5568'; const data = { labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], datasets: [{ label: 'Study Hours', data: Array(7).fill(0).map(() => Math.random() * 5), backgroundColor: '#38bdf8', borderRadius: 5 }] }; if (weeklyChart) weeklyChart.destroy(); weeklyChart = new Chart(ctx, { type: 'bar', data: data, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, title: { display: true, text: 'Hours Studied', color: textColor }, grid: { color: gridColor }, ticks: { color: textColor } }, x: { grid: { display: false }, ticks: { color: textColor } } }, plugins: { legend: { display: false } } } }); }
-    async function renderSubjects() { const subjects = await apiRequest('/api/subjects'); const container = document.getElementById('subjectsContainer'); container.innerHTML = ''; if (subjects.length === 0) { container.innerHTML = '<p class="text-gray-400">No subjects added yet. Add one above!</p>'; return; } subjects.forEach(s => { const el = document.createElement('div'); el.className = 'bg-gray-800 p-6 rounded-lg'; const lecturesHtml = s.lectures.map(l => `<tr><td class="p-2">${l.lecture_number}</td><td class="p-2"><input type="number" value="${l.uni_lecs}" class="w-16 bg-gray-700 p-1 rounded lecture-table-input" data-type="uni_lecs" data-lecture-id="${l.id}"></td><td class="p-2"><input type="number" value="${l.studied}" class="w-16 bg-gray-700 p-1 rounded lecture-table-input" data-type="studied" data-lecture-id="${l.id}"></td><td class="p-2"><label class="toggle-switch"><input type="checkbox" ${l.revised ? 'checked' : ''} class="lecture-table-input" data-type="revised" data-lecture-id="${l.id}"><span class="slider"></span></label></td><td class="p-2"><button class="text-blue-400 open-flashcards" data-subject-id="${s.id}" data-lecture-id="${l.lecture_number}"><i class="fas fa-clone"></i></button></td></tr>`).join(''); el.innerHTML = `<h2 class="text-xl font-semibold mb-4">${s.name}</h2><div class="overflow-x-auto"><table class="w-full text-left"><thead><tr><th>Lec#</th><th>Univ.</th><th>Studied</th><th>Status</th><th>Actions</th></tr></thead><tbody>${lecturesHtml}</tbody></table></div><button class="mt-4 text-sm text-blue-400 add-lecture" data-subject-id="${s.id}">+ Add Lecture</button>`; container.appendChild(el); }); }
-    async function addSubject() { const input = document.getElementById('newSubjectInput'); const name = input.value.trim(); if (name) { await apiRequest('/api/subjects', 'POST', { name }); input.value = ''; renderSubjects(); renderPomodoroAssignments(); } }
-    async function addLecture(subjectId) { await apiRequest(`/api/subjects/${subjectId}/lectures`, 'POST'); renderSubjects(); renderPomodoroAssignments(); }
-    async function updateLecture(target) { const lectureId = target.dataset.lectureId; const row = target.closest('tr'); const data = { uni_lecs: parseInt(row.querySelector('[data-type="uni_lecs"]').value), studied: parseInt(row.querySelector('[data-type="studied"]').value), revised: row.querySelector('[data-type="revised"]').checked }; await apiRequest(`/api/lectures/${lectureId}`, 'PUT', data); }
-    async function renderExams() { generateReverseSchedule(); }
-    async function addExam() { const nameInput = document.getElementById('examNameInput'); const dateInput = document.getElementById('examDateInput'); if (nameInput.value && dateInput.value) { await apiRequest('/api/exams', 'POST', { name: nameInput.value, date: dateInput.value }); nameInput.value = ''; dateInput.value = ''; renderDashboardMetrics(); generateReverseSchedule(); } }
-    async function generateReverseSchedule() { const container = document.getElementById('reverseScheduleContainer'); const exams = await apiRequest('/api/exams'); const subjects = await apiRequest('/api/subjects'); if (exams.length === 0) { container.innerHTML = '<p class="text-gray-400">Add an exam to generate a schedule.</p>'; return; } const upcomingExam = exams[0]; const daysUntilExam = Math.ceil((new Date(upcomingExam.date) - new Date()) / (1000 * 60 * 60 * 24)); const totalLecturesToStudy = subjects.reduce((sum, s) => sum + s.lectures.reduce((lecSum, l) => lecSum + (l.uni_lecs - l.studied), 0), 0); const lecturesPerDay = totalLecturesToStudy > 0 && daysUntilExam > 3 ? (totalLecturesToStudy / (daysUntilExam - 3)).toFixed(1) : 0; container.innerHTML = `<h3 class="font-semibold text-lg">${upcomingExam.name} Plan</h3><p>Study <strong class="text-blue-400">${lecturesPerDay} lectures per day</strong>.</p>`; }
-    async function openMistakeModal() { const subjects = await apiRequest('/api/subjects'); let selectHTML = '<option value="">Select Subject</option>'; subjects.forEach(s => selectHTML += `<option value="${s.id}">${s.name}</option>`); document.getElementById('mistakeModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Log Mistake</h2><div class="space-y-4"><input type="text" id="mistakeTopicInput" placeholder="Topic" class="bg-gray-700 w-full p-2 rounded"><textarea id="mistakeDescriptionInput" placeholder="Description" class="bg-gray-700 w-full p-2 rounded h-24"></textarea><select id="mistakeSubjectSelect" class="bg-gray-700 w-full p-2 rounded">${selectHTML}</select><button id="saveMistakeBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('mistakeModal').style.display = 'flex'; }
-    async function saveMistake() { const topic = document.getElementById('mistakeTopicInput').value.trim(); const description = document.getElementById('mistakeDescriptionInput').value.trim(); const subjectId = parseInt(document.getElementById('mistakeSubjectSelect').value); if (topic && description && subjectId) { await apiRequest('/api/mistakes', 'POST', { topic, description, subject_id: subjectId }); document.getElementById('mistakeModal').style.display = 'none'; renderDashboardMetrics(); } }
-    let timerInterval, isRunning = false, timeLeft = 1500, currentMode = 'pomodoro', sessionCount = 1; const modes = { pomodoro: { time: 1500, status: 'Stay Focused' }, shortBreak: { time: 300, status: 'Short Break' }, longBreak: { time: 900, status: 'Long Break' } }; function updateTimerDisplay() { const timerDisplay = document.getElementById('timer'); if (!timerDisplay) return; const minutes = Math.floor(timeLeft / 60); const seconds = timeLeft % 60; timerDisplay.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`; const totalSeconds = modes[currentMode].time; const percentage = ((totalSeconds - timeLeft) / totalSeconds) * 360; document.getElementById('pomodoroDial').style.background = `conic-gradient(#38bdf8 ${percentage}deg, #2d3748 ${percentage}deg)`; } function startTimer() { if (isRunning) return; isRunning = true; document.getElementById('startStopBtn').innerHTML = '<i class="fas fa-pause"></i>'; timerInterval = setInterval(() => { timeLeft--; updateTimerDisplay(); if (timeLeft <= 0) { clearInterval(timerInterval); if (currentMode === 'pomodoro') { logPomodoroSession(); } switchMode(); } }, 1000); } function stopTimer() { if (!isRunning) return; isRunning = false; document.getElementById('startStopBtn').innerHTML = '<i class="fas fa-play"></i>'; clearInterval(timerInterval); } function resetTimer() { stopTimer(); timeLeft = modes[currentMode].time; updateTimerDisplay(); } function switchMode(forceNext = false) { stopTimer(); if (currentMode === 'pomodoro') { if (!forceNext) sessionCount++; currentMode = sessionCount % 4 === 0 ? 'longBreak' : 'shortBreak'; } else { currentMode = 'pomodoro'; } timeLeft = modes[currentMode].time; document.getElementById('timer-status').textContent = modes[currentMode].status; document.getElementById('session-tracker').textContent = `${Math.ceil(sessionCount/2)} / 4 Sessions`; updateTimerDisplay(); } async function logPomodoroSession() { const duration = modes.pomodoro.time; const assigned = document.getElementById('pomodoroSubjectAssign').value; let [subjectId, lectureId] = assigned ? assigned.split('-').map(Number) : [null, null]; await apiRequest('/api/pomodoro', 'POST', { duration, subject_id: subjectId, lecture_id: lectureId }); renderDashboardMetrics(); }
-    async function renderPomodoroAssignments() { const subjects = await apiRequest('/api/subjects'); const select = document.getElementById('pomodoroSubjectAssign'); select.innerHTML = '<option value="">Assign to lecture...</option>'; subjects.forEach(s => { const optgroup = document.createElement('optgroup'); optgroup.label = s.name; s.lectures.forEach(l => { optgroup.innerHTML += `<option value="${s.id}-${l.lecture_number}">Lecture ${l.lecture_number}</option>`; }); select.appendChild(optgroup); }); }
-    async function openFlashcardModal(subjectId, lectureId) { const subject = (await apiRequest('/api/subjects')).find(s => s.id == subjectId); const cards = await apiRequest(`/api/subjects/${subjectId}/lectures/${lectureId}/flashcards`); currentFlashcardState = { subjectId, lectureId, cards, currentIndex: 0 }; document.getElementById('flashcardModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Flashcards for ${subject.name} - Lec ${lectureId}</h2><div class="mb-4"><div class="flashcard" id="flipFlashcard"><div class="flashcard-inner"><div class="flashcard-front"><p id="flashcard-front-content"></p></div><div class="flashcard-back"><p id="flashcard-back-content"></p></div></div></div></div><div class="flex justify-between items-center mb-4"><button id="prevFlashcard" class="bg-gray-600 p-2 rounded"><i class="fas fa-arrow-left"></i></button><span id="flashcardCounter"></span><button id="nextFlashcard" class="bg-gray-600 p-2 rounded"><i class="fas fa-arrow-right"></i></button></div><div class="flex gap-4"><input type="text" id="newFlashcardFront" placeholder="Front" class="bg-gray-700 w-1/2 p-2 rounded"><input type="text" id="newFlashcardBack" placeholder="Back" class="bg-gray-700 w-1/2 p-2 rounded"></div><button id="addFlashcardBtn" class="w-full mt-4 bg-green-600 p-2 rounded">Add Card</button></div>`; renderFlashcard(); document.getElementById('flashcardModal').style.display = 'flex'; }
-    function renderFlashcard() { const { cards, currentIndex } = currentFlashcardState; const modal = document.getElementById('flashcardModal'); modal.querySelector('.flashcard').classList.remove('is-flipped'); if (cards.length === 0) { modal.querySelector('#flashcard-front-content').textContent = 'No cards yet.'; modal.querySelector('#flashcard-back-content').textContent = 'Add one!'; modal.querySelector('#flashcardCounter').textContent = '0 / 0'; } else { const card = cards[currentIndex]; modal.querySelector('#flashcard-front-content').textContent = card.front; modal.querySelector('#flashcard-back-content').textContent = card.back; modal.querySelector('#flashcardCounter').textContent = `${currentIndex + 1} / ${cards.length}`; } }
-    function navigateFlashcard(direction) { const { cards } = currentFlashcardState; if (cards.length > 0) { currentFlashcardState.currentIndex = (currentFlashcardState.currentIndex + direction + cards.length) % cards.length; renderFlashcard(); } }
-    async function addFlashcard() { const modal = document.getElementById('flashcardModal'); const front = modal.querySelector('#newFlashcardFront').value.trim(); const back = modal.querySelector('#newFlashcardBack').value.trim(); const { subjectId, lectureId } = currentFlashcardState; if (front && back) { await apiRequest('/api/flashcards', 'POST', { subject_id: subjectId, lecture_id: lectureId, front, back }); openFlashcardModal(subjectId, lectureId); } }
-    async function renderCourses() { const courses = await apiRequest('/api/courses'); const container = document.getElementById('courseLibraryContainer'); container.innerHTML = ''; if (courses.length === 0) { container.innerHTML = '<p class="text-gray-400 md:col-span-2">No courses added.</p>'; return; } courses.forEach(c => { const progress = c.total_units > 0 ? (c.completed_units / c.total_units) * 100 : 0; container.innerHTML += `<div class="bg-gray-700 p-4 rounded-lg"><h3 class="font-bold">${c.title}</h3><p class="text-sm text-gray-400">${c.platform} - ${c.category}</p><div class="mt-3"><div class="flex justify-between text-sm mb-1"><span>Progress</span><span>${Math.round(progress)}%</span></div><div class="w-full bg-gray-600 rounded-full h-2.5"><div class="bg-blue-500 h-2.5 rounded-full" style="width: ${progress}%"></div></div><p class="text-xs text-gray-500 mt-1">${c.completed_units}/${c.total_units} units</p></div></div>`; }); }
-    function openCourseModal() { document.getElementById('courseModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Add Course</h2><div class="space-y-4"><input type="text" id="courseTitleInput" placeholder="Title" class="bg-gray-700 w-full p-2 rounded"><div class="grid grid-cols-2 gap-4"><input type="text" id="coursePlatformInput" placeholder="Platform" class="bg-gray-700 w-full p-2 rounded"><input type="text" id="courseCategoryInput" placeholder="Category" class="bg-gray-700 w-full p-2 rounded"></div><div class="grid grid-cols-2 gap-4"><input type="number" id="courseTotalUnitsInput" placeholder="Total Units" class="bg-gray-700 w-full p-2 rounded"><input type="number" id="courseCompletedUnitsInput" placeholder="Completed Units" class="bg-gray-700 w-full p-2 rounded"></div><div><label class="text-sm">Target Date</label><input type="date" id="courseTargetDateInput" class="bg-gray-700 w-full p-2 rounded"></div><input type="number" id="courseSessionsWeekInput" placeholder="Target Sessions/Week" class="bg-gray-700 w-full p-2 rounded"><button id="saveCourseBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('courseModal').style.display = 'flex'; }
-    async function saveCourse() { const modal = document.getElementById('courseModal'); const data = { title: modal.querySelector('#courseTitleInput').value, platform: modal.querySelector('#coursePlatformInput').value, category: modal.querySelector('#courseCategoryInput').value, total_units: parseInt(modal.querySelector('#courseTotalUnitsInput').value) || 0, completed_units: parseInt(modal.querySelector('#courseCompletedUnitsInput').value) || 0, target_date: modal.querySelector('#courseTargetDateInput').value, sessions_per_week: parseInt(modal.querySelector('#courseSessionsWeekInput').value) || 1 }; await apiRequest('/api/courses', 'POST', data); modal.style.display = 'none'; renderCourses(); }
-    async function renderSchedule() { const events = await apiRequest('/api/schedule'); const container = document.getElementById('timeline-container'); if (!container) return; container.innerHTML = ''; for (let i = 0; i < 24; i++) { container.innerHTML += `<div class="timeline-hour"><span class="timeline-hour-label">${i.toString().padStart(2, '0')}:00</span></div>`; } events.forEach(e => { const startMinutes = timeToMinutes(e.start_time); const endMinutes = timeToMinutes(e.end_time); const duration = endMinutes - startMinutes; container.innerHTML += `<div class="timeline-event" style="top:${startMinutes}px; height:${duration}px; background-color:rgba(${getColor(e.color)}, 0.5); border-color:rgb(${getColor(e.color)});"><p class="font-bold">${e.title}</p></div>`; }); }
-    function openCustomEventModal() { document.getElementById('customEventModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Add Custom Event</h2><div class="space-y-4"><input type="text" id="customEventTitle" placeholder="Title" class="bg-gray-700 w-full p-2 rounded"><div class="grid grid-cols-2 gap-4"><div><label class="text-sm">Start</label><input type="time" id="customEventStart" class="bg-gray-700 w-full p-2 rounded"></div><div><label class="text-sm">End</label><input type="time" id="customEventEnd" class="bg-gray-700 w-full p-2 rounded"></div></div><div><label class="text-sm">Color</label><select id="customEventColor" class="bg-gray-700 w-full p-2 rounded"><option value="purple">Purple</option><option value="yellow">Yellow</option><option value="teal">Teal</option></select></div><button id="saveCustomEventBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('customEventModal').style.display = 'flex'; }
-    async function saveCustomEvent() { const modal = document.getElementById('customEventModal'); const data = { title: modal.querySelector('#customEventTitle').value, start_time: modal.querySelector('#customEventStart').value, end_time: modal.querySelector('#customEventEnd').value, color: modal.querySelector('#customEventColor').value }; if (data.title && data.start_time && data.end_time) { await apiRequest('/api/schedule', 'POST', data); modal.style.display = 'none'; renderSchedule(); } }
+    return jsonify({
+        'players': [to_dict(p) for p in players],
+        'tags': [{**to_dict(t), 'player_name': t.player.name} for t in tags],
+        'shots': [to_dict(s) for s in shots],
+        'stats': list(stats.values())
+    })
 
-    // --- GYM FUNCTIONS ---
-    function renderTodaysWorkout() { document.getElementById('gym-today').innerHTML = '<p class="text-gray-400">Today\'s workout plan coming soon...</p>'; }
-    function renderGymPlanner() { document.getElementById('gym-planner').innerHTML = '<p class="text-gray-400">Weekly planner coming soon...</p>'; }
-    async function renderExerciseLibrary() {
-        const exercises = await apiRequest('/api/gym/exercises');
-        const container = document.getElementById('gym-exercises');
-        container.innerHTML = `<h2 class="text-2xl font-semibold mb-4">Exercise Library</h2><button id="addExerciseBtn" class="mb-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add Exercise</button><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>`;
-        const libraryContainer = container.querySelector('div.grid');
-        libraryContainer.innerHTML = '';
-        exercises.forEach(ex => {
-            libraryContainer.innerHTML += `<div class="bg-gray-800 p-4 rounded-lg flex flex-col justify-between"><div><h3 class="font-bold text-lg">${ex.name}</h3><p class="text-sm text-blue-400">${ex.group}</p><div class="mt-2 space-x-2">${(ex.tags || []).map(tag => `<span class="bg-gray-700 text-xs font-semibold mr-2 px-2.5 py-0.5 rounded">${tag}</span>`).join('')}</div><p class="text-sm text-gray-400 mt-2">${ex.cues}</p></div><div class="mt-4"><button class="edit-exercise-btn text-sm text-yellow-400 hover:underline" data-exercise-id="${ex.id}">Edit</button></div></div>`;
-        });
-    }
-    async function renderPrLog() {
-        const prs = await apiRequest('/api/gym/prs');
-        const container = document.getElementById('gym-prs');
-        container.innerHTML = `<h2 class="text-2xl font-semibold mb-4">Personal Records</h2><div class="space-y-4"></div>`;
-        const prContainer = container.querySelector('div.space-y-4');
-        if (prs.length === 0) { prContainer.innerHTML = '<p class="text-gray-400">No PRs logged yet!</p>'; return; }
-        prContainer.innerHTML = '';
-        prs.forEach(pr => {
-            prContainer.innerHTML += `<div class="bg-gray-800 p-4 rounded-lg flex items-center justify-between"><div><p class="font-bold text-xl">${pr.exercise_name}</p><p class="text-gray-400 text-sm">${new Date(pr.date).toLocaleDateString()}</p></div><div class="text-right"><p class="text-2xl font-bold text-blue-400">${pr.weight}kg x ${pr.reps}</p><p class="text-sm text-gray-500">Est. 1RM: ${Math.round(pr.weight * (1 + pr.reps / 30))}kg</p></div><div class="text-yellow-400 text-3xl"><i class="fas fa-trophy"></i></div></div>`;
-        });
-    }
-    function openExerciseModal(exerciseId = null) {
-        const isEditing = exerciseId !== null;
-        document.getElementById('exerciseModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">${isEditing ? 'Edit' : 'Add'} Exercise</h2><div class="space-y-4"><input type="hidden" id="exerciseIdInput" value="${exerciseId || ''}"><input type="text" id="exerciseNameInput" placeholder="Name" class="bg-gray-700 w-full p-2 rounded"><select id="exerciseGroupInput" class="bg-gray-700 w-full p-2 rounded">${['Chest','Back','Shoulders','Biceps','Triceps','Legs','Abs','Other'].map(g => `<option>${g}</option>`).join('')}</select><input type="text" id="exerciseCuesInput" placeholder="Cues" class="bg-gray-700 w-full p-2 rounded"><input type="text" id="exerciseTagsInput" placeholder="Tags (comma-separated)" class="bg-gray-700 w-full p-2 rounded"><button id="saveExerciseBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`;
-        document.getElementById('exerciseModal').style.display = 'flex';
-    }
-    async function saveExercise() {
-        const modal = document.getElementById('exerciseModal');
-        const data = {
-            name: modal.querySelector('#exerciseNameInput').value,
-            group: modal.querySelector('#exerciseGroupInput').value,
-            cues: modal.querySelector('#exerciseCuesInput').value,
-            tags: modal.querySelector('#exerciseTagsInput').value.split(',').map(t => t.trim()).filter(Boolean)
-        };
-        await apiRequest('/api/gym/exercises', 'POST', data);
-        modal.style.display = 'none';
-        renderExerciseLibrary();
-    }
+@app.route('/api/basketball/tags', methods=['POST'])
+def add_bball_tag():
+    data = request.json
+    player = BasketballPlayer.query.get(data['player_id'])
+    if not player: return jsonify({'error': 'Player not found'}), 404
+    
+    new_tag = VideoTag(time=data['time'], player_id=data['player_id'], category=data['category'], action=data['action'], stat_type=data['stat_type'])
+    db.session.add(new_tag)
+    db.session.commit()
+    return jsonify(to_dict(new_tag)), 201
 
-    // --- BASKETBALL FUNCTIONS ---
-    async function addPlayer() {
-        const input = document.getElementById('newPlayerNameInput');
-        const name = input.value.trim();
-        if (name) {
-            await apiRequest('/api/basketball/players', 'POST', { name });
-            input.value = '';
-            renderPlayerStats(); // Re-render the stats table to show the new player
-        }
-    }
-    function importVideo(target) { const file = target.files[0]; const videoPlayer = document.getElementById('basketball-video'); if (file) { videoPlayer.src = URL.createObjectURL(file); videoPlayer.style.display = 'block'; document.getElementById('video-placeholder').style.display = 'none'; } }
-    async function openTaggingModal() {
-        const videoPlayer = document.getElementById('basketball-video');
-        if (!videoPlayer.src) { alert("Import a video first."); return; }
-        const { players } = await apiRequest('/api/basketball/data');
-        if (!players || players.length === 0) {
-            alert("No players found. Please add a player in the 'Stats' tab first.");
-            return;
-        }
-        document.getElementById('taggingModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Tag Action</h2><div class="space-y-4"><div><label>Player</label><select id="tag-player" class="bg-gray-700 w-full p-2 rounded">${players.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></div><div><label>Category</label><select id="tag-category" class="bg-gray-700 w-full p-2 rounded">${['Offense','Defense','Transition'].map(c => `<option>${c}</option>`).join('')}</select></div><div><label>Action</label><input type="text" id="tag-action" placeholder="e.g., Pick & Roll" class="bg-gray-700 w-full p-2 rounded"></div><div><label>Stat Type</label><select id="tag-stat-type" class="bg-gray-700 w-full p-2 rounded">${Object.entries({'none':'None','fga_made':'Shot Made','fga_missed':'Shot Missed','ast':'Assist'}).map(([v,l]) => `<option value="${v}">${l}</option>`).join('')}</select></div><button id="saveTagBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`;
-        document.getElementById('taggingModal').style.display = 'flex';
-    }
-    async function saveTag() {
-        const modal = document.getElementById('taggingModal');
-        const data = {
-            time: document.getElementById('basketball-video').currentTime,
-            player_id: parseInt(modal.querySelector('#tag-player').value),
-            category: modal.querySelector('#tag-category').value,
-            action: modal.querySelector('#tag-action').value,
-            stat_type: modal.querySelector('#tag-stat-type').value
-        };
-        await apiRequest('/api/basketball/tags', 'POST', data);
-        modal.style.display = 'none';
-        renderTimeline();
-    }
-    function handleShotChartClick(e) {
-        const rect = e.currentTarget.getBoundingClientRect();
-        tempShotData = { x: (e.clientX - rect.left) / rect.width * 100, y: (e.clientY - rect.top) / rect.height * 100 };
-        document.getElementById('shotModal').innerHTML = `<div class="modal-content max-w-xs"><h2 class="text-xl font-bold mb-4 text-center">Shot Result</h2><div class="flex justify-around"><button id="shot-made-btn" class="bg-green-600 p-3 px-6 rounded">Make</button><button id="shot-missed-btn" class="bg-red-600 p-3 px-6 rounded">Miss</button></div></div>`;
-        document.getElementById('shotModal').style.display = 'flex';
-    }
-    async function logShot(made) {
-        const { players } = await apiRequest('/api/basketball/data');
-        if (!players || players.length === 0) {
-            alert("Cannot log shot, no players exist.");
-            return;
-        }
-        await apiRequest('/api/basketball/shots', 'POST', { ...tempShotData, made, player_id: players[0].id });
-        document.getElementById('shotModal').style.display = 'none';
-        renderShotChart();
-    }
-    async function renderTimeline() {
-        const { tags } = await apiRequest('/api/basketball/data');
-        const container = document.getElementById('analysis-timeline');
-        container.innerHTML = tags.length === 0 ? '<p class="text-gray-400">Tagged actions will appear here.</p>' : tags.map(tag => `<div class="bg-gray-700 p-2 rounded-lg text-sm"><p><strong class="text-blue-400">${formatVideoTime(tag.time)}</strong> - ${tag.player_name}</p><p class="text-gray-300">${tag.category}: ${tag.action}</p></div>`).join('');
-    }
-    async function renderShotChart() {
-        const { shots } = await apiRequest('/api/basketball/data');
-        const container = document.getElementById('bball-shot-chart');
-        container.innerHTML = `<div class="bg-gray-800 p-4 rounded-lg"><h3 class="text-xl font-semibold mb-4">Shot Chart</h3><div id="shot-chart-container"></div></div>`;
-        const chartContainer = container.querySelector('#shot-chart-container');
-        chartContainer.innerHTML = shots.map(shot => `<div class="shot-dot" style="left: ${shot.x}%; top: ${shot.y}%; background-color: ${shot.made ? '#4ade80' : '#f87171'};"></div>`).join('');
-    }
-    async function renderPlayerStats() {
-        const { stats } = await apiRequest('/api/basketball/data');
-        const container = document.getElementById('bball-stats');
-        let tableHTML = `
-            <div class="bg-gray-800 p-4 rounded-lg">
-                <h3 class="text-xl font-semibold mb-4">Player Stats</h3>
-                <div class="mb-4 flex gap-2">
-                    <input type="text" id="newPlayerNameInput" class="bg-gray-700 border border-gray-600 rounded-lg py-2 px-4 w-full md:w-1/3" placeholder="New player name...">
-                    <button id="addPlayerBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add Player</button>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left">
-                        <thead><tr><th>Player</th><th>PTS</th><th>FGM/A</th><th>AST</th></tr></thead>
-                        <tbody>`;
-        stats.forEach(p => { tableHTML += `<tr><td class="p-2">${p.name}</td><td class="p-2">${p.PTS}</td><td class="p-2">${p.FGM}/${p.FGA}</td><td class="p-2">${p.AST}</td></tr>`; });
-        tableHTML += '</tbody></table></div></div>';
-        container.innerHTML = tableHTML;
-    }
-    function renderLineupImpact() { document.getElementById('bball-lineups').innerHTML = '<p class="text-gray-400">Lineup analysis coming soon.</p>'; }
-    function renderGameReport() { document.getElementById('bball-report').innerHTML = '<p class="text-gray-400">Game reports coming soon.</p>'; }
+@app.route('/api/basketball/shots', methods=['POST'])
+def add_bball_shot():
+    data = request.json
+    player_id = data.get('player_id', 1)
+    
+    if not BasketballPlayer.query.get(player_id):
+        return jsonify({'error': f'Player with ID {player_id} not found'}), 404
 
-    // --- UTILITY FUNCTIONS ---
-    function formatTime(seconds, short = false) { if (isNaN(seconds) || seconds < 0) return "0m"; const h = Math.floor(seconds / 3600); const m = Math.floor((seconds % 3600) / 60); return short ? `${h}h ${m}m` : `${h}h ${m}m`; }
-    function formatVideoTime(timeInSeconds) { const minutes = Math.floor(timeInSeconds / 60); const seconds = Math.floor(timeInSeconds % 60); return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`; }
-    function getColor(colorName) { const colors = { red: '248, 113, 113', green: '74, 222, 128', blue: '96, 165, 250', indigo: '129, 140, 248', purple: '167, 139, 250', yellow: '250, 204, 21', teal: '45, 212, 191' }; return colors[colorName] || colors.blue; }
-    function timeToMinutes(timeStr) { const [hours, minutes] = timeStr.split(':').map(Number); return hours * 60 + minutes; }
+    new_shot = Shot(x=data['x'], y=data['y'], made=data['made'], player_id=player_id)
+    db.session.add(new_shot)
+    db.session.commit()
+    return jsonify(to_dict(new_shot)), 201
 
-    // --- INITIALIZATION ---
-    setupNavigation();
-    loadPageData('dashboard'); // Load initial page
-    updateTimerDisplay();
-});
+if __name__ == '__main__':
+    app.run(debug=True)
