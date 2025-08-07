@@ -17,6 +17,9 @@ DATABASE = 'db_abc901_elhaqom'
 app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{USER}:{PASSWORD}@{SERVER}/{DATABASE}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = False
+# FIX: Add pool recycling to prevent connection timeouts on Vercel
+app.config['SQLALCHEMY_POOL_RECYCLE'] = 280
+app.config['SQLALCHEMY_POOL_TIMEOUT'] = 20
 
 db = SQLAlchemy(app)
 
