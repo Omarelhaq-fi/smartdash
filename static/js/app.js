@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const pages = document.querySelectorAll('.page');
     const navLinks = document.querySelectorAll('.sidebar-icon');
     const darkModeToggle = document.getElementById('darkModeToggle');
+    const mainModal = document.getElementById('mainModal');
 
     // --- API HELPER ---
     async function apiRequest(url, method = 'GET', body = null) {
@@ -70,7 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
         switch(pageId) {
             case 'dashboard': renderDashboardMetrics(); break;
             case 'subjects': renderSubjects(); break;
-            case 'courses': renderCourses(); break;
+            case 'courses': renderCourses(); renderGoals(); break;
             case 'schedule': renderSchedule(); break;
             case 'planner': renderExams(); break;
             case 'pomodoro': renderPomodoroAssignments(); break;
@@ -113,24 +114,24 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         const targetButton = e.target.closest('button, a, .close-modal');
-        if (!targetButton && !e.target.closest('.flashcard') && e.target.id !== 'shot-chart-container') return;
+        if (!targetButton && !e.target.closest('.flashcard, .course-card') && e.target.id !== 'shot-chart-container') return;
         
         if (targetButton && targetButton.closest('.close-modal')) {
-             targetButton.closest('.modal').style.display = 'none';
+             mainModal.style.display = 'none';
              return;
         }
         
-        const id = targetButton ? targetButton.id : (e.target.id || e.target.closest('.flashcard')?.id);
+        const id = targetButton ? targetButton.id : (e.target.id || e.target.closest('.flashcard, .course-card')?.id);
 
         const actions = {
-            'addSubjectBtn': addSubject, 'addExamBtn': addExam, 'addMistakeBtn': openMistakeModal, 'saveMistakeBtn': saveMistake,
-            'addCourseBtn': openCourseModal, 'saveCourseBtn': saveCourse, 'addCustomEventBtn': openCustomEventModal, 'saveCustomEventBtn': saveCustomEvent,
-            'addExerciseBtn': openExerciseModal, 'saveExerciseBtn': saveExercise, 'import-video-btn': () => document.getElementById('video-upload').click(),
-            'add-tag-btn': openTaggingModal, 'saveTagBtn': saveTag, 'shot-made-btn': () => logShot(true), 'shot-missed-btn': () => logShot(false),
+            'addSubjectBtn': addSubject, 'addExamBtn': addExam, 'addMistakeBtn': () => openModal('mistake'),
+            'addCourseBtn': () => openModal('course'), 'saveCourseBtn': saveCourse, 'addCustomEventBtn': () => openModal('customEvent'), 'saveCustomEventBtn': saveCustomEvent,
+            'addExerciseBtn': () => openModal('exercise'), 'saveExerciseBtn': saveExercise, 'import-video-btn': () => document.getElementById('video-upload').click(),
+            'add-tag-btn': () => openModal('tagging'), 'saveTagBtn': saveTag, 'shot-made-btn': () => logShot(true), 'shot-missed-btn': () => logShot(false),
             'flipFlashcard': () => document.querySelector('.flashcard').classList.toggle('is-flipped'), 'prevFlashcard': () => navigateFlashcard(-1), 'nextFlashcard': () => navigateFlashcard(1),
             'addFlashcardBtn': addFlashcard, 'startStopBtn': () => isRunning ? stopTimer() : startTimer(), 'resetTimerBtn': resetTimer, 'skipBtn': () => switchMode(true),
-            'addPlayerBtn': addPlayer,
-            'downloadReportBtn': downloadPlayerReport,
+            'addPlayerBtn': addPlayer, 'downloadReportBtn': downloadPlayerReport, 'addGoalBtn': addGoal, 'saveGymPlannerBtn': saveGymPlanner,
+            'resetSubjectsBtn': () => resetData('subjects'), 'resetCoursesBtn': () => resetData('courses'), 'resetGymBtn': () => resetData('gym'), 'resetBasketballBtn': () => resetData('basketball'),
         };
 
         if (actions[id]) actions[id]();
@@ -138,16 +139,18 @@ document.addEventListener('DOMContentLoaded', function() {
         else if (targetButton?.classList.contains('start-pomodoro-lecture')) {
             const { subjectId, lectureId } = targetButton.dataset;
             document.getElementById('pomodoroSubjectAssign').value = `${subjectId}-${lectureId}`;
-            navLinks.forEach(link => {
-                if(link.dataset.target === 'pomodoro') link.click();
-            });
+            navLinks.forEach(link => { if(link.dataset.target === 'pomodoro') link.click(); });
         }
         else if (targetButton?.closest('.open-flashcards')) {
             const subjectId = targetButton.closest('[data-subject-id]').dataset.subjectId;
             const lectureId = targetButton.closest('[data-lecture-id]').dataset.lectureId;
-            openFlashcardModal(subjectId, lectureId);
-        } else if (targetButton?.classList.contains('edit-exercise-btn')) {
-            openExerciseModal(targetButton.dataset.exerciseId);
+            openModal('flashcard', {subjectId, lectureId});
+        } 
+        else if (targetButton?.closest('.course-card')) {
+            openModal('courseUnits', {courseId: targetButton.closest('.course-card').dataset.courseId});
+        }
+        else if (targetButton?.classList.contains('edit-exercise-btn')) {
+            openModal('exercise', {exerciseId: targetButton.dataset.exerciseId});
         } else if (e.target.id === 'shot-chart-container') {
             handleShotChartClick(e);
         }
@@ -160,6 +163,27 @@ document.addEventListener('DOMContentLoaded', function() {
             renderDashboardMetrics();
         }
         if (target.id === 'video-upload') importVideo(target);
+        if (target.classList.contains('goal-checkbox')) updateGoal(target);
+        if (target.classList.contains('course-unit-checkbox')) updateCourseUnit(target);
+    }
+    
+    // --- GENERIC MODAL HANDLER ---
+    async function openModal(type, data = {}) {
+        let content = '';
+        switch(type) {
+            case 'courseUnits':
+                const course = (await apiRequest('/api/courses')).find(c => c.id == data.courseId);
+                const unitsHtml = course.units.map(u => `
+                    <div class="flex items-center">
+                        <input type="checkbox" id="unit-${u.id}" data-unit-id="${u.id}" class="course-unit-checkbox w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded" ${u.is_complete ? 'checked' : ''}>
+                        <label for="unit-${u.id}" class="ml-2 text-sm font-medium">Unit ${u.unit_number}</label>
+                    </div>`).join('');
+                content = `<div class="modal-content"><span class="close-modal">&times;</span><h2 class="text-xl font-bold mb-4">${course.title} - Units</h2><div class="space-y-2">${unitsHtml}</div></div>`;
+                break;
+            // Other cases for mistake, course, etc. would go here
+        }
+        mainModal.innerHTML = content;
+        mainModal.style.display = 'flex';
     }
 
     // --- RENDER FUNCTIONS ---
@@ -186,43 +210,22 @@ document.addEventListener('DOMContentLoaded', function() {
         const subjects = await apiRequest('/api/subjects');
         const container = document.getElementById('subjectsContainer');
         container.innerHTML = '';
-        if (subjects.length === 0) {
-            container.innerHTML = '<p class="text-gray-400">No subjects added yet. Add one above!</p>';
-            return;
-        }
+        if (subjects.length === 0) { container.innerHTML = '<p class="text-gray-400">No subjects added yet. Add one above!</p>'; return; }
         subjects.forEach(s => {
             const el = document.createElement('div');
             el.className = 'bg-gray-800 p-6 rounded-lg';
             const lecturesHtml = s.lectures.map(l => {
                 const isFinished = l.uni_lecs > 0 && l.studied >= l.uni_lecs;
-                return `
-                <tr class="${isFinished ? 'bg-green-900/50' : ''}">
+                return `<tr class="${isFinished ? 'bg-green-900/50' : ''}">
                     <td class="p-2">${l.lecture_number}</td>
                     <td class="p-2"><input type="number" value="${l.uni_lecs}" class="w-16 bg-gray-700 p-1 rounded lecture-table-input" data-type="uni_lecs" data-lecture-id="${l.id}"></td>
                     <td class="p-2"><input type="number" value="${l.studied}" class="w-16 bg-gray-700 p-1 rounded lecture-table-input" data-type="studied" data-lecture-id="${l.id}"></td>
                     <td class="p-2">${l.pomodoros_done || 0}</td>
-                    <td class="p-2">
-                        <label class="toggle-switch">
-                            <input type="checkbox" ${l.revised ? 'checked' : ''} class="lecture-table-input" data-type="revised" data-lecture-id="${l.id}">
-                            <span class="slider"></span>
-                        </label>
-                    </td>
-                    <td class="p-2 space-x-2">
-                        <button class="text-blue-400 open-flashcards" data-subject-id="${s.id}" data-lecture-id="${l.lecture_number}"><i class="fas fa-clone"></i></button>
-                        <button class="text-orange-400 start-pomodoro-lecture" data-subject-id="${s.id}" data-lecture-id="${l.id}"><i class="fas fa-clock"></i></button>
-                    </td>
+                    <td class="p-2"><label class="toggle-switch"><input type="checkbox" ${l.revised ? 'checked' : ''} class="lecture-table-input" data-type="revised" data-lecture-id="${l.id}"><span class="slider"></span></label></td>
+                    <td class="p-2 space-x-2"><button class="text-blue-400 open-flashcards" data-subject-id="${s.id}" data-lecture-id="${l.lecture_number}"><i class="fas fa-clone"></i></button><button class="text-orange-400 start-pomodoro-lecture" data-subject-id="${s.id}" data-lecture-id="${l.id}"><i class="fas fa-clock"></i></button></td>
                 </tr>`;
             }).join('');
-
-            el.innerHTML = `
-                <h2 class="text-xl font-semibold mb-4">${s.name}</h2>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left">
-                        <thead><tr><th>Lec#</th><th>Univ.</th><th>Studied</th><th>Pomos</th><th>Revised</th><th>Actions</th></tr></thead>
-                        <tbody>${lecturesHtml}</tbody>
-                    </table>
-                </div>
-                <button class="mt-4 text-sm text-blue-400 add-lecture" data-subject-id="${s.id}">+ Add Lecture</button>`;
+            el.innerHTML = `<h2 class="text-xl font-semibold mb-4">${s.name}</h2><div class="overflow-x-auto"><table class="w-full text-left"><thead><tr><th>Lec#</th><th>Univ.</th><th>Studied</th><th>Pomos</th><th>Revised</th><th>Actions</th></tr></thead><tbody>${lecturesHtml}</tbody></table></div><button class="mt-4 text-sm text-blue-400 add-lecture" data-subject-id="${s.id}">+ Add Lecture</button>`;
             container.appendChild(el);
         });
     }
@@ -230,95 +233,123 @@ document.addEventListener('DOMContentLoaded', function() {
     async function updateLecture(target) {
         const lectureId = target.dataset.lectureId;
         const row = target.closest('tr');
-        const data = {
-            uni_lecs: parseInt(row.querySelector('[data-type="uni_lecs"]').value),
-            studied: parseInt(row.querySelector('[data-type="studied"]').value),
-            revised: row.querySelector('[data-type="revised"]').checked
-        };
+        const data = { uni_lecs: parseInt(row.querySelector('[data-type="uni_lecs"]').value), studied: parseInt(row.querySelector('[data-type="studied"]').value), revised: row.querySelector('[data-type="revised"]').checked };
         await apiRequest(`/api/lectures/${lectureId}`, 'PUT', data);
     }
     
-    // --- BASKETBALL FUNCTIONS ---
-    async function downloadPlayerReport() {
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF();
-        const { stats } = await apiRequest('/api/basketball/data');
-
-        doc.setFontSize(18);
-        doc.text("Player Stats Report", 14, 22);
-        
-        const tableColumn = ["Player", "Points", "FGM/A", "Assists"];
-        const tableRows = [];
-
-        stats.forEach(player => {
-            const playerData = [ player.name, player.PTS, `${player.FGM}/${player.FGA}`, player.AST ];
-            tableRows.push(playerData);
-        });
-
-        doc.autoTable({
-            head: [tableColumn],
-            body: tableRows,
-            startY: 30,
-        });
-
-        doc.save('player_report.pdf');
+    // --- Course & Goal Functions ---
+    async function renderCourses() {
+        const courses = await apiRequest('/api/courses');
+        const container = document.getElementById('courseLibraryContainer');
+        container.innerHTML = courses.length === 0 ? '<p class="text-gray-400 md:col-span-2">No courses added.</p>' : courses.map(c => {
+            const progress = c.total_units > 0 ? (c.completed_units / c.total_units) * 100 : 0;
+            return `<div class="bg-gray-700 p-4 rounded-lg course-card cursor-pointer" data-course-id="${c.id}">
+                <h3 class="font-bold">${c.title}</h3><p class="text-sm text-gray-400">${c.platform} - ${c.category}</p>
+                <div class="mt-3"><div class="flex justify-between text-sm mb-1"><span>Progress</span><span>${Math.round(progress)}%</span></div>
+                <div class="w-full bg-gray-600 rounded-full h-2.5"><div class="bg-blue-500 h-2.5 rounded-full" style="width: ${progress}%"></div></div>
+                <p class="text-xs text-gray-500 mt-1">${c.completed_units}/${c.total_units} units</p></div></div>`;
+        }).join('');
+    }
+    async function updateCourseUnit(target) {
+        const unitId = target.dataset.unitId;
+        const is_complete = target.checked;
+        await apiRequest(`/api/course_units/${unitId}`, 'PUT', { is_complete });
+        renderCourses(); // Re-render to update progress bar
+    }
+    async function renderGoals() {
+        const goals = await apiRequest('/api/goals');
+        const container = document.getElementById('goalsContainer');
+        container.innerHTML = goals.map(g => `
+            <div class="flex items-center"><input type="checkbox" id="goal-${g.id}" data-goal-id="${g.id}" class="goal-checkbox w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded" ${g.is_complete ? 'checked' : ''}>
+            <label for="goal-${g.id}" class="ml-2 text-sm font-medium ${g.is_complete ? 'line-through text-gray-500' : ''}">${g.text}</label></div>`).join('');
+    }
+    async function addGoal() {
+        const input = document.getElementById('newGoalInput');
+        if (input.value.trim()) {
+            await apiRequest('/api/goals', 'POST', { text: input.value.trim() });
+            input.value = '';
+            renderGoals();
+        }
+    }
+    async function updateGoal(target) {
+        const goalId = target.dataset.goalId;
+        const is_complete = target.checked;
+        await apiRequest(`/api/goals/${goalId}`, 'PUT', { is_complete });
+        renderGoals();
     }
     
-    async function renderPlayerStats() {
-        const { stats } = await apiRequest('/api/basketball/data');
-        const container = document.getElementById('bball-stats');
-        let tableHTML = `
-            <div class="bg-gray-800 p-4 rounded-lg">
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-xl font-semibold">Player Stats</h3>
-                    <button id="downloadReportBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg">Download Report</button>
-                </div>
-                <div class="mb-4 flex gap-2">
-                    <input type="text" id="newPlayerNameInput" class="bg-gray-700 border border-gray-600 rounded-lg py-2 px-4 w-full md:w-1/3" placeholder="New player name...">
-                    <button id="addPlayerBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add Player</button>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left">
-                        <thead><tr><th>Player</th><th>PTS</th><th>FGM/A</th><th>AST</th></tr></thead>
-                        <tbody>`;
-        stats.forEach(p => { tableHTML += `<tr><td class="p-2">${p.name}</td><td class="p-2">${p.PTS}</td><td class="p-2">${p.FGM}/${p.FGA}</td><td class="p-2">${p.AST}</td></tr>`; });
-        tableHTML += '</tbody></table></div></div>';
-        container.innerHTML = tableHTML;
+    // --- Gym Functions ---
+    async function renderTodaysWorkout() {
+        const workout = await apiRequest('/api/gym/today');
+        const container = document.getElementById('gym-today');
+        container.innerHTML = `<h2 class="text-2xl font-semibold mb-4">Today: ${workout.name}</h2>`;
+        if (!workout || workout.exercises.length === 0) { container.innerHTML += '<p class="text-gray-400">Rest day!</p>'; return; }
+        const workoutTable = document.createElement('div');
+        workoutTable.className = 'space-y-6';
+        workout.exercises.forEach(ex => {
+            const historyText = ex.history ? `Last: ${ex.history.weight}kg x ${ex.history.reps} reps` : 'First time!';
+            let setsHtml = Array.from({ length: 3 }, (_, i) => `<tr><td class="p-2">${i+1}</td><td class="p-2"><input type="number" class="w-20 bg-gray-700 p-1 rounded" placeholder="${ex.history?.weight || ''}"></td><td class="p-2"><input type="number" class="w-20 bg-gray-700 p-1 rounded" placeholder="${ex.history?.reps || ''}"></td><td class="p-2"><input type="checkbox" class="w-5 h-5 bg-gray-700 rounded text-blue-500 focus:ring-blue-600"></td></tr>`).join('');
+            workoutTable.innerHTML += `<div class="bg-gray-800 p-4 rounded-lg"><h3 class="text-xl font-bold">${ex.name}</h3><p class="text-sm text-gray-400 mb-3"><i class="fas fa-history"></i> ${historyText}</p><table class="w-full text-center"><thead><tr><th>Set</th><th>Weight (kg)</th><th>Reps</th><th>Done</th></tr></thead><tbody>${setsHtml}</tbody></table></div>`;
+        });
+        container.appendChild(workoutTable);
+    }
+    async function renderGymPlanner() {
+        const plannerData = await apiRequest('/api/gym/planner');
+        const exercises = await apiRequest('/api/gym/exercises');
+        const container = document.getElementById('gym-planner');
+        const exerciseOptions = exercises.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+        container.innerHTML = `<h2 class="text-2xl font-semibold mb-4">Weekly Planner</h2><div id="planner-form" class="space-y-4"></div><button id="saveGymPlannerBtn" class="mt-6 w-full bg-blue-600 p-2 rounded">Save Planner</button>`;
+        const form = container.querySelector('#planner-form');
+        plannerData.forEach(day => {
+            form.innerHTML += `<div class="bg-gray-800 p-4 rounded-lg" data-day="${day.day_of_week}">
+                <h3 class="font-bold text-lg">${day.day_of_week}</h3>
+                <input type="text" class="w-full bg-gray-700 p-2 rounded mt-2 planner-workout-name" placeholder="Workout Name (e.g., Push Day)" value="${day.workout_name || ''}">
+                <select multiple class="w-full bg-gray-700 p-2 rounded mt-2 h-32 planner-exercise-select">${exerciseOptions}</select>
+            </div>`;
+            const select = form.querySelector(`[data-day="${day.day_of_week}"] select`);
+            (day.exercise_ids || []).forEach(id => {
+                const option = select.querySelector(`option[value="${id}"]`);
+                if(option) option.selected = true;
+            });
+        });
+    }
+    async function saveGymPlanner() {
+        const plannerDivs = document.querySelectorAll('#planner-form > div');
+        const payload = Array.from(plannerDivs).map(div => ({
+            day_of_week: div.dataset.day,
+            workout_name: div.querySelector('.planner-workout-name').value,
+            exercise_ids: Array.from(div.querySelector('.planner-exercise-select').selectedOptions).map(opt => parseInt(opt.value))
+        }));
+        await apiRequest('/api/gym/planner', 'PUT', payload);
+        alert('Gym planner saved!');
+        renderTodaysWorkout();
+    }
+    
+    // --- Reset Data ---
+    async function resetData(section) {
+        if (confirm(`Are you sure you want to reset all ${section} data? This cannot be undone.`)) {
+            await apiRequest(`/api/reset/${section}`, 'POST');
+            alert(`${section} data has been reset.`);
+            loadPageData(section); // Reload the current page
+        }
     }
 
-    // --- Other functions (unchanged) ---
+    // --- Other Unchanged Functions ---
+    async function downloadPlayerReport() { const { jsPDF } = window.jspdf; const doc = new jsPDF(); const { stats } = await apiRequest('/api/basketball/data'); doc.setFontSize(18); doc.text("Player Stats Report", 14, 22); const tableColumn = ["Player", "Points", "FGM/A", "Assists"]; const tableRows = []; stats.forEach(player => { tableRows.push([ player.name, player.PTS, `${player.FGM}/${player.FGA}`, player.AST ]); }); doc.autoTable({ head: [tableColumn], body: tableRows, startY: 30, }); doc.save('player_report.pdf'); }
+    async function renderPlayerStats() { const { stats } = await apiRequest('/api/basketball/data'); const container = document.getElementById('bball-stats'); let tableHTML = `<div class="bg-gray-800 p-4 rounded-lg"><div class="flex justify-between items-center mb-4"><h3 class="text-xl font-semibold">Player Stats</h3><button id="downloadReportBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg">Download Report</button></div><div class="mb-4 flex gap-2"><input type="text" id="newPlayerNameInput" class="bg-gray-700 border border-gray-600 rounded-lg py-2 px-4 w-full md:w-1/3" placeholder="New player name..."><button id="addPlayerBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add Player</button></div><div class="overflow-x-auto"><table class="w-full text-left"><thead><tr><th>Player</th><th>PTS</th><th>FGM/A</th><th>AST</th></tr></thead><tbody>`; stats.forEach(p => { tableHTML += `<tr><td class="p-2">${p.name}</td><td class="p-2">${p.PTS}</td><td class="p-2">${p.FGM}/${p.FGA}</td><td class="p-2">${p.AST}</td></tr>`; }); tableHTML += '</tbody></table></div></div>'; container.innerHTML = tableHTML; }
     function renderWeeklyChart() { const ctx = document.getElementById('weeklyStudyChart').getContext('2d'); const isDark = document.documentElement.classList.contains('dark'); const gridColor = isDark ? '#4a5568' : '#e2e8f0'; const textColor = isDark ? '#a0aec0' : '#4a5568'; const data = { labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], datasets: [{ label: 'Study Hours', data: Array(7).fill(0).map(() => Math.random() * 5), backgroundColor: '#38bdf8', borderRadius: 5 }] }; if (weeklyChart) weeklyChart.destroy(); weeklyChart = new Chart(ctx, { type: 'bar', data: data, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, title: { display: true, text: 'Hours Studied', color: textColor }, grid: { color: gridColor }, ticks: { color: textColor } }, x: { grid: { display: false }, ticks: { color: textColor } } }, plugins: { legend: { display: false } } } }); }
     async function addSubject() { const input = document.getElementById('newSubjectInput'); const name = input.value.trim(); if (name) { await apiRequest('/api/subjects', 'POST', { name }); input.value = ''; renderSubjects(); renderPomodoroAssignments(); } }
     async function addLecture(subjectId) { await apiRequest(`/api/subjects/${subjectId}/lectures`, 'POST'); renderSubjects(); renderPomodoroAssignments(); }
     async function renderExams() { generateReverseSchedule(); }
     async function addExam() { const nameInput = document.getElementById('examNameInput'); const dateInput = document.getElementById('examDateInput'); if (nameInput.value && dateInput.value) { await apiRequest('/api/exams', 'POST', { name: nameInput.value, date: dateInput.value }); nameInput.value = ''; dateInput.value = ''; renderDashboardMetrics(); generateReverseSchedule(); } }
     async function generateReverseSchedule() { const container = document.getElementById('reverseScheduleContainer'); const exams = await apiRequest('/api/exams'); const subjects = await apiRequest('/api/subjects'); if (exams.length === 0) { container.innerHTML = '<p class="text-gray-400">Add an exam to generate a schedule.</p>'; return; } const upcomingExam = exams[0]; const daysUntilExam = Math.ceil((new Date(upcomingExam.date) - new Date()) / (1000 * 60 * 60 * 24)); const totalLecturesToStudy = subjects.reduce((sum, s) => sum + s.lectures.reduce((lecSum, l) => lecSum + (l.uni_lecs - l.studied), 0), 0); const lecturesPerDay = totalLecturesToStudy > 0 && daysUntilExam > 3 ? (totalLecturesToStudy / (daysUntilExam - 3)).toFixed(1) : 0; container.innerHTML = `<h3 class="font-semibold text-lg">${upcomingExam.name} Plan</h3><p>Study <strong class="text-blue-400">${lecturesPerDay} lectures per day</strong>.</p>`; }
-    async function openMistakeModal() { const subjects = await apiRequest('/api/subjects'); let selectHTML = '<option value="">Select Subject</option>'; subjects.forEach(s => selectHTML += `<option value="${s.id}">${s.name}</option>`); document.getElementById('mistakeModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Log Mistake</h2><div class="space-y-4"><input type="text" id="mistakeTopicInput" placeholder="Topic" class="bg-gray-700 w-full p-2 rounded"><textarea id="mistakeDescriptionInput" placeholder="Description" class="bg-gray-700 w-full p-2 rounded h-24"></textarea><select id="mistakeSubjectSelect" class="bg-gray-700 w-full p-2 rounded">${selectHTML}</select><button id="saveMistakeBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('mistakeModal').style.display = 'flex'; }
-    async function saveMistake() { const topic = document.getElementById('mistakeTopicInput').value.trim(); const description = document.getElementById('mistakeDescriptionInput').value.trim(); const subjectId = parseInt(document.getElementById('mistakeSubjectSelect').value); if (topic && description && subjectId) { await apiRequest('/api/mistakes', 'POST', { topic, description, subject_id: subjectId }); document.getElementById('mistakeModal').style.display = 'none'; renderDashboardMetrics(); } }
     let timerInterval, isRunning = false, timeLeft = 1500, currentMode = 'pomodoro', sessionCount = 1; const modes = { pomodoro: { time: 1500, status: 'Stay Focused' }, shortBreak: { time: 300, status: 'Short Break' }, longBreak: { time: 900, status: 'Long Break' } }; function updateTimerDisplay() { const timerDisplay = document.getElementById('timer'); if (!timerDisplay) return; const minutes = Math.floor(timeLeft / 60); const seconds = timeLeft % 60; timerDisplay.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`; const totalSeconds = modes[currentMode].time; const percentage = ((totalSeconds - timeLeft) / totalSeconds) * 360; document.getElementById('pomodoroDial').style.background = `conic-gradient(#38bdf8 ${percentage}deg, #2d3748 ${percentage}deg)`; } function startTimer() { if (isRunning) return; isRunning = true; document.getElementById('startStopBtn').innerHTML = '<i class="fas fa-pause"></i>'; timerInterval = setInterval(() => { timeLeft--; updateTimerDisplay(); if (timeLeft <= 0) { clearInterval(timerInterval); if (currentMode === 'pomodoro') { logPomodoroSession(); } switchMode(); } }, 1000); } function stopTimer() { if (!isRunning) return; isRunning = false; document.getElementById('startStopBtn').innerHTML = '<i class="fas fa-play"></i>'; clearInterval(timerInterval); } function resetTimer() { stopTimer(); timeLeft = modes[currentMode].time; updateTimerDisplay(); } function switchMode(forceNext = false) { stopTimer(); if (currentMode === 'pomodoro') { if (!forceNext) sessionCount++; currentMode = sessionCount % 4 === 0 ? 'longBreak' : 'shortBreak'; } else { currentMode = 'pomodoro'; } timeLeft = modes[currentMode].time; document.getElementById('timer-status').textContent = modes[currentMode].status; document.getElementById('session-tracker').textContent = `${Math.ceil(sessionCount/2)} / 4 Sessions`; updateTimerDisplay(); } async function logPomodoroSession() { const duration = modes.pomodoro.time; const assigned = document.getElementById('pomodoroSubjectAssign').value; let [subjectId, lectureId] = assigned ? assigned.split('-').map(Number) : [null, null]; await apiRequest('/api/pomodoro', 'POST', { duration, subject_id: subjectId, lecture_id: lectureId }); renderDashboardMetrics(); renderSubjects(); }
     async function renderPomodoroAssignments() { const subjects = await apiRequest('/api/subjects'); const select = document.getElementById('pomodoroSubjectAssign'); select.innerHTML = '<option value="">Assign to lecture...</option>'; subjects.forEach(s => { const optgroup = document.createElement('optgroup'); optgroup.label = s.name; s.lectures.forEach(l => { optgroup.innerHTML += `<option value="${s.id}-${l.id}">${s.name} - Lecture ${l.lecture_number}</option>`; }); select.appendChild(optgroup); }); }
-    async function openFlashcardModal(subjectId, lectureId) { const subject = (await apiRequest('/api/subjects')).find(s => s.id == subjectId); const cards = await apiRequest(`/api/subjects/${subjectId}/lectures/${lectureId}/flashcards`); currentFlashcardState = { subjectId, lectureId, cards, currentIndex: 0 }; document.getElementById('flashcardModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Flashcards for ${subject.name} - Lec ${lectureId}</h2><div class="mb-4"><div class="flashcard" id="flipFlashcard"><div class="flashcard-inner"><div class="flashcard-front"><p id="flashcard-front-content"></p></div><div class="flashcard-back"><p id="flashcard-back-content"></p></div></div></div></div><div class="flex justify-between items-center mb-4"><button id="prevFlashcard" class="bg-gray-600 p-2 rounded"><i class="fas fa-arrow-left"></i></button><span id="flashcardCounter"></span><button id="nextFlashcard" class="bg-gray-600 p-2 rounded"><i class="fas fa-arrow-right"></i></button></div><div class="flex gap-4"><input type="text" id="newFlashcardFront" placeholder="Front" class="bg-gray-700 w-1/2 p-2 rounded"><input type="text" id="newFlashcardBack" placeholder="Back" class="bg-gray-700 w-1/2 p-2 rounded"></div><button id="addFlashcardBtn" class="w-full mt-4 bg-green-600 p-2 rounded">Add Card</button></div>`; renderFlashcard(); document.getElementById('flashcardModal').style.display = 'flex'; }
-    function renderFlashcard() { const { cards, currentIndex } = currentFlashcardState; const modal = document.getElementById('flashcardModal'); modal.querySelector('.flashcard').classList.remove('is-flipped'); if (cards.length === 0) { modal.querySelector('#flashcard-front-content').textContent = 'No cards yet.'; modal.querySelector('#flashcard-back-content').textContent = 'Add one!'; modal.querySelector('#flashcardCounter').textContent = '0 / 0'; } else { const card = cards[currentIndex]; modal.querySelector('#flashcard-front-content').textContent = card.front; modal.querySelector('#flashcard-back-content').textContent = card.back; modal.querySelector('#flashcardCounter').textContent = `${currentIndex + 1} / ${cards.length}`; } }
-    function navigateFlashcard(direction) { const { cards } = currentFlashcardState; if (cards.length > 0) { currentFlashcardState.currentIndex = (currentFlashcardState.currentIndex + direction + cards.length) % cards.length; renderFlashcard(); } }
-    async function addFlashcard() { const modal = document.getElementById('flashcardModal'); const front = modal.querySelector('#newFlashcardFront').value.trim(); const back = modal.querySelector('#newFlashcardBack').value.trim(); const { subjectId, lectureId } = currentFlashcardState; if (front && back) { await apiRequest('/api/flashcards', 'POST', { subject_id: subjectId, lecture_id: lectureId, front, back }); openFlashcardModal(subjectId, lectureId); } }
-    async function renderCourses() { const courses = await apiRequest('/api/courses'); const container = document.getElementById('courseLibraryContainer'); container.innerHTML = ''; if (courses.length === 0) { container.innerHTML = '<p class="text-gray-400 md:col-span-2">No courses added.</p>'; return; } courses.forEach(c => { const progress = c.total_units > 0 ? (c.completed_units / c.total_units) * 100 : 0; container.innerHTML += `<div class="bg-gray-700 p-4 rounded-lg"><h3 class="font-bold">${c.title}</h3><p class="text-sm text-gray-400">${c.platform} - ${c.category}</p><div class="mt-3"><div class="flex justify-between text-sm mb-1"><span>Progress</span><span>${Math.round(progress)}%</span></div><div class="w-full bg-gray-600 rounded-full h-2.5"><div class="bg-blue-500 h-2.5 rounded-full" style="width: ${progress}%"></div></div><p class="text-xs text-gray-500 mt-1">${c.completed_units}/${c.total_units} units</p></div></div>`; }); }
-    function openCourseModal() { document.getElementById('courseModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Add Course</h2><div class="space-y-4"><input type="text" id="courseTitleInput" placeholder="Title" class="bg-gray-700 w-full p-2 rounded"><div class="grid grid-cols-2 gap-4"><input type="text" id="coursePlatformInput" placeholder="Platform" class="bg-gray-700 w-full p-2 rounded"><input type="text" id="courseCategoryInput" placeholder="Category" class="bg-gray-700 w-full p-2 rounded"></div><div class="grid grid-cols-2 gap-4"><input type="number" id="courseTotalUnitsInput" placeholder="Total Units" class="bg-gray-700 w-full p-2 rounded"><input type="number" id="courseCompletedUnitsInput" placeholder="Completed Units" class="bg-gray-700 w-full p-2 rounded"></div><div><label class="text-sm">Target Date</label><input type="date" id="courseTargetDateInput" class="bg-gray-700 w-full p-2 rounded"></div><input type="number" id="courseSessionsWeekInput" placeholder="Target Sessions/Week" class="bg-gray-700 w-full p-2 rounded"><button id="saveCourseBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('courseModal').style.display = 'flex'; }
-    async function saveCourse() { const modal = document.getElementById('courseModal'); const data = { title: modal.querySelector('#courseTitleInput').value, platform: modal.querySelector('#coursePlatformInput').value, category: modal.querySelector('#courseCategoryInput').value, total_units: parseInt(modal.querySelector('#courseTotalUnitsInput').value) || 0, completed_units: parseInt(modal.querySelector('#courseCompletedUnitsInput').value) || 0, target_date: modal.querySelector('#courseTargetDateInput').value, sessions_per_week: parseInt(modal.querySelector('#courseSessionsWeekInput').value) || 1 }; await apiRequest('/api/courses', 'POST', data); modal.style.display = 'none'; renderCourses(); }
-    async function renderSchedule() { const events = await apiRequest('/api/schedule'); const container = document.getElementById('timeline-container'); if (!container) return; container.innerHTML = ''; for (let i = 0; i < 24; i++) { container.innerHTML += `<div class="timeline-hour"><span class="timeline-hour-label">${i.toString().padStart(2, '0')}:00</span></div>`; } events.forEach(e => { const startMinutes = timeToMinutes(e.start_time); const endMinutes = timeToMinutes(e.end_time); const duration = endMinutes - startMinutes; container.innerHTML += `<div class="timeline-event" style="top:${startMinutes}px; height:${duration}px; background-color:rgba(${getColor(e.color)}, 0.5); border-color:rgb(${getColor(e.color)});"><p class="font-bold">${e.title}</p></div>`; }); }
-    function openCustomEventModal() { document.getElementById('customEventModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Add Custom Event</h2><div class="space-y-4"><input type="text" id="customEventTitle" placeholder="Title" class="bg-gray-700 w-full p-2 rounded"><div class="grid grid-cols-2 gap-4"><div><label class="text-sm">Start</label><input type="time" id="customEventStart" class="bg-gray-700 w-full p-2 rounded"></div><div><label class="text-sm">End</label><input type="time" id="customEventEnd" class="bg-gray-700 w-full p-2 rounded"></div></div><div><label class="text-sm">Color</label><select id="customEventColor" class="bg-gray-700 w-full p-2 rounded"><option value="purple">Purple</option><option value="yellow">Yellow</option><option value="teal">Teal</option></select></div><button id="saveCustomEventBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('customEventModal').style.display = 'flex'; }
-    async function saveCustomEvent() { const modal = document.getElementById('customEventModal'); const data = { title: modal.querySelector('#customEventTitle').value, start_time: modal.querySelector('#customEventStart').value, end_time: modal.querySelector('#customEventEnd').value, color: modal.querySelector('#customEventColor').value }; if (data.title && data.start_time && data.end_time) { await apiRequest('/api/schedule', 'POST', data); modal.style.display = 'none'; renderSchedule(); } }
-    function renderTodaysWorkout() { document.getElementById('gym-today').innerHTML = '<p class="text-gray-400">Today\'s workout plan coming soon...</p>'; }
-    function renderGymPlanner() { document.getElementById('gym-planner').innerHTML = '<p class="text-gray-400">Weekly planner coming soon...</p>'; }
-    async function renderExerciseLibrary() { const exercises = await apiRequest('/api/gym/exercises'); const container = document.getElementById('gym-exercises'); container.innerHTML = `<h2 class="text-2xl font-semibold mb-4">Exercise Library</h2><button id="addExerciseBtn" class="mb-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add Exercise</button><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>`; const libraryContainer = container.querySelector('div.grid'); libraryContainer.innerHTML = ''; exercises.forEach(ex => { libraryContainer.innerHTML += `<div class="bg-gray-800 p-4 rounded-lg flex flex-col justify-between"><div><h3 class="font-bold text-lg">${ex.name}</h3><p class="text-sm text-blue-400">${ex.group}</p><div class="mt-2 space-x-2">${(ex.tags || []).map(tag => `<span class="bg-gray-700 text-xs font-semibold mr-2 px-2.5 py-0.5 rounded">${tag}</span>`).join('')}</div><p class="text-sm text-gray-400 mt-2">${ex.cues}</p></div><div class="mt-4"><button class="edit-exercise-btn text-sm text-yellow-400 hover:underline" data-exercise-id="${ex.id}">Edit</button></div></div>`; }); }
-    async function renderPrLog() { const prs = await apiRequest('/api/gym/prs'); const container = document.getElementById('gym-prs'); container.innerHTML = `<h2 class="text-2xl font-semibold mb-4">Personal Records</h2><div class="space-y-4"></div>`; const prContainer = container.querySelector('div.space-y-4'); if (prs.length === 0) { prContainer.innerHTML = '<p class="text-gray-400">No PRs logged yet!</p>'; return; } prContainer.innerHTML = ''; prs.forEach(pr => { prContainer.innerHTML += `<div class="bg-gray-800 p-4 rounded-lg flex items-center justify-between"><div><p class="font-bold text-xl">${pr.exercise_name}</p><p class="text-gray-400 text-sm">${new Date(pr.date).toLocaleDateString()}</p></div><div class="text-right"><p class="text-2xl font-bold text-blue-400">${pr.weight}kg x ${pr.reps}</p><p class="text-sm text-gray-500">Est. 1RM: ${Math.round(pr.weight * (1 + pr.reps / 30))}kg</p></div><div class="text-yellow-400 text-3xl"><i class="fas fa-trophy"></i></div></div>`; }); }
-    function openExerciseModal(exerciseId = null) { const isEditing = exerciseId !== null; document.getElementById('exerciseModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">${isEditing ? 'Edit' : 'Add'} Exercise</h2><div class="space-y-4"><input type="hidden" id="exerciseIdInput" value="${exerciseId || ''}"><input type="text" id="exerciseNameInput" placeholder="Name" class="bg-gray-700 w-full p-2 rounded"><select id="exerciseGroupInput" class="bg-gray-700 w-full p-2 rounded">${['Chest','Back','Shoulders','Biceps','Triceps','Legs','Abs','Other'].map(g => `<option>${g}</option>`).join('')}</select><input type="text" id="exerciseCuesInput" placeholder="Cues" class="bg-gray-700 w-full p-2 rounded"><input type="text" id="exerciseTagsInput" placeholder="Tags (comma-separated)" class="bg-gray-700 w-full p-2 rounded"><button id="saveExerciseBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('exerciseModal').style.display = 'flex'; }
-    async function saveExercise() { const modal = document.getElementById('exerciseModal'); const data = { name: modal.querySelector('#exerciseNameInput').value, group: modal.querySelector('#exerciseGroupInput').value, cues: modal.querySelector('#exerciseCuesInput').value, tags: modal.querySelector('#exerciseTagsInput').value.split(',').map(t => t.trim()).filter(Boolean) }; await apiRequest('/api/gym/exercises', 'POST', data); modal.style.display = 'none'; renderExerciseLibrary(); }
     async function addPlayer() { const input = document.getElementById('newPlayerNameInput'); const name = input.value.trim(); if (name) { await apiRequest('/api/basketball/players', 'POST', { name }); input.value = ''; renderPlayerStats(); } }
     function importVideo(target) { const file = target.files[0]; const videoPlayer = document.getElementById('basketball-video'); if (file) { videoPlayer.src = URL.createObjectURL(file); videoPlayer.style.display = 'block'; document.getElementById('video-placeholder').style.display = 'none'; } }
-    async function openTaggingModal() { const videoPlayer = document.getElementById('basketball-video'); if (!videoPlayer.src) { alert("Import a video first."); return; } const { players } = await apiRequest('/api/basketball/data'); if (!players || players.length === 0) { alert("No players found. Please add a player in the 'Stats' tab first."); return; } document.getElementById('taggingModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Tag Action</h2><div class="space-y-4"><div><label>Player</label><select id="tag-player" class="bg-gray-700 w-full p-2 rounded">${players.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></div><div><label>Category</label><select id="tag-category" class="bg-gray-700 w-full p-2 rounded">${['Offense','Defense','Transition'].map(c => `<option>${c}</option>`).join('')}</select></div><div><label>Action</label><input type="text" id="tag-action" placeholder="e.g., Pick & Roll" class="bg-gray-700 w-full p-2 rounded"></div><div><label>Stat Type</label><select id="tag-stat-type" class="bg-gray-700 w-full p-2 rounded">${Object.entries({'none':'None','fga_made':'Shot Made','fga_missed':'Shot Missed','ast':'Assist'}).map(([v,l]) => `<option value="${v}">${l}</option>`).join('')}</select></div><button id="saveTagBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('taggingModal').style.display = 'flex'; }
-    async function saveTag() { const modal = document.getElementById('taggingModal'); const data = { time: document.getElementById('basketball-video').currentTime, player_id: parseInt(modal.querySelector('#tag-player').value), category: modal.querySelector('#tag-category').value, action: modal.querySelector('#tag-action').value, stat_type: modal.querySelector('#tag-stat-type').value }; await apiRequest('/api/basketball/tags', 'POST', data); modal.style.display = 'none'; renderTimeline(); }
-    function handleShotChartClick(e) { const rect = e.currentTarget.getBoundingClientRect(); tempShotData = { x: (e.clientX - rect.left) / rect.width * 100, y: (e.clientY - rect.top) / rect.height * 100 }; document.getElementById('shotModal').innerHTML = `<div class="modal-content max-w-xs"><h2 class="text-xl font-bold mb-4 text-center">Shot Result</h2><div class="flex justify-around"><button id="shot-made-btn" class="bg-green-600 p-3 px-6 rounded">Make</button><button id="shot-missed-btn" class="bg-red-600 p-3 px-6 rounded">Miss</button></div></div>`; document.getElementById('shotModal').style.display = 'flex'; }
-    async function logShot(made) { const { players } = await apiRequest('/api/basketball/data'); if (!players || players.length === 0) { alert("Cannot log shot, no players exist."); return; } await apiRequest('/api/basketball/shots', 'POST', { ...tempShotData, made, player_id: players[0].id }); document.getElementById('shotModal').style.display = 'none'; renderShotChart(); }
+    async function saveTag() { const modal = document.getElementById('mainModal'); const data = { time: document.getElementById('basketball-video').currentTime, player_id: parseInt(modal.querySelector('#tag-player').value), category: modal.querySelector('#tag-category').value, action: modal.querySelector('#tag-action').value, stat_type: modal.querySelector('#tag-stat-type').value }; await apiRequest('/api/basketball/tags', 'POST', data); modal.style.display = 'none'; renderTimeline(); }
+    function handleShotChartClick(e) { const rect = e.currentTarget.getBoundingClientRect(); tempShotData = { x: (e.clientX - rect.left) / rect.width * 100, y: (e.clientY - rect.top) / rect.height * 100 }; openModal('shot'); }
+    async function logShot(made) { const { players } = await apiRequest('/api/basketball/data'); if (!players || players.length === 0) { alert("Cannot log shot, no players exist."); return; } await apiRequest('/api/basketball/shots', 'POST', { ...tempShotData, made, player_id: players[0].id }); mainModal.style.display = 'none'; renderShotChart(); }
     async function renderTimeline() { const { tags } = await apiRequest('/api/basketball/data'); const container = document.getElementById('analysis-timeline'); container.innerHTML = tags.length === 0 ? '<p class="text-gray-400">Tagged actions will appear here.</p>' : tags.map(tag => `<div class="bg-gray-700 p-2 rounded-lg text-sm"><p><strong class="text-blue-400">${formatVideoTime(tag.time)}</strong> - ${tag.player_name}</p><p class="text-gray-300">${tag.category}: ${tag.action}</p></div>`).join(''); }
     async function renderShotChart() { const { shots } = await apiRequest('/api/basketball/data'); const container = document.getElementById('bball-shot-chart'); container.innerHTML = `<div class="bg-gray-800 p-4 rounded-lg"><h3 class="text-xl font-semibold mb-4">Shot Chart</h3><div id="shot-chart-container"></div></div>`; const chartContainer = container.querySelector('#shot-chart-container'); chartContainer.innerHTML = shots.map(shot => `<div class="shot-dot" style="left: ${shot.x}%; top: ${shot.y}%; background-color: ${shot.made ? '#4ade80' : '#f87171'};"></div>`).join(''); }
     function renderLineupImpact() { document.getElementById('bball-lineups').innerHTML = '<p class="text-gray-400">Lineup analysis coming soon.</p>'; }
