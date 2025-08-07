@@ -71,7 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
         switch(pageId) {
             case 'dashboard': renderDashboardMetrics(); break;
             case 'subjects': renderSubjects(); break;
-            case 'courses': renderCourses(); renderGoals(); break;
+            case 'courses': renderCourses(); break;
             case 'schedule': renderSchedule(); break;
             case 'planner': renderExams(); break;
             case 'pomodoro': renderPomodoroAssignments(); break;
@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function handleGlobalClick(e) {
         if (e.target.classList.contains('modal')) {
-            e.target.style.display = 'none';
+            mainModal.style.display = 'none';
             return;
         }
         
@@ -330,7 +330,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (confirm(`Are you sure you want to reset all ${section} data? This cannot be undone.`)) {
             await apiRequest(`/api/reset/${section}`, 'POST');
             alert(`${section} data has been reset.`);
-            loadPageData(section); // Reload the current page
+            loadPageData(section);
         }
     }
 
