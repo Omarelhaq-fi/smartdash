@@ -1,12 +1,11 @@
 from flask import Flask, jsonify, request, render_template
-from flask_mysqldb import MySQL
+from flask_pymysql import MySQL # Changed from flask_mysqldb
 from datetime import datetime
 
 app = Flask(__name__, template_folder='.', static_folder='.')
 
 # --- MySQL Configuration ---
-# IMPORTANT: You will need to provide the password for your database.
-# I have left it as 'your_password_here' for security.
+# Now using Flask-PyMySQL which is more compatible for deployment
 app.config['MYSQL_HOST'] = 'mysql6013.site4now.net'
 app.config['MYSQL_USER'] = 'abc901_elhaqom'
 app.config['MYSQL_PASSWORD'] = 'omarreda123' # <-- IMPORTANT: REPLACE WITH YOUR ACTUAL PASSWORD
@@ -114,4 +113,3 @@ def update_lecture(lecture_id):
 
 if __name__ == '__main__':
     app.run(debug=True)
-
