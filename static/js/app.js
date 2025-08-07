@@ -138,7 +138,6 @@ document.addEventListener('DOMContentLoaded', function() {
         else if (targetButton?.classList.contains('start-pomodoro-lecture')) {
             const { subjectId, lectureId } = targetButton.dataset;
             document.getElementById('pomodoroSubjectAssign').value = `${subjectId}-${lectureId}`;
-            // Switch to pomodoro page
             navLinks.forEach(link => {
                 if(link.dataset.target === 'pomodoro') link.click();
             });
@@ -158,7 +157,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const target = e.target;
         if (target.closest('.lecture-table-input')) {
             await updateLecture(target);
-            renderDashboardMetrics(); // Refresh dashboard goals on change
+            renderDashboardMetrics();
         }
         if (target.id === 'video-upload') importVideo(target);
     }
@@ -166,8 +165,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- RENDER FUNCTIONS ---
     async function renderDashboardMetrics() {
         const data = await apiRequest('/api/dashboard_metrics');
-        
-        // Goals
         const { lectures, gym, courses } = data.goals;
         document.getElementById('lectureProgress').textContent = `${lectures.current}/${lectures.target}`;
         document.getElementById('lectureProgressBar').style.width = `${(lectures.current / lectures.target) * 100}%`;
@@ -175,20 +172,13 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('gymProgressBar').style.width = `${(gym.current / gym.target) * 100}%`;
         document.getElementById('courseProgress').textContent = `${courses.current}/${courses.target}`;
         document.getElementById('courseProgressBar').style.width = `${(courses.current / courses.target) * 100}%`;
-
-        // Pomodoro
         document.getElementById('pomodoroDaily').textContent = formatTime(data.pomodoro.daily, true);
         document.getElementById('pomodoroWeekly').textContent = formatTime(data.pomodoro.weekly, true);
         document.getElementById('pomodoroMonthly').textContent = formatTime(data.pomodoro.monthly, true);
-        
-        // Exams
         const examContainer = document.getElementById('examCountdownContainer');
         examContainer.innerHTML = data.exams.length === 0 ? '<p class="text-gray-400">No upcoming exams.</p>' : data.exams.map(exam => `<div class="mb-2"><p><strong>${exam.name}</strong> is in <span class="text-blue-400 font-bold">${Math.max(0, Math.ceil((new Date(exam.date) - new Date()) / (1000 * 60 * 60 * 24)))} days</span></p></div>`).join('');
-        
-        // Weak Topics
         const weakTopicsList = document.getElementById('weakTopicsList');
         weakTopicsList.innerHTML = data.weak_topics.length === 0 ? '<li>No mistakes logged.</li>' : data.weak_topics.map(m => `<li>${m.topic} (${m.subject_name})</li>`).join('');
-        
         renderWeeklyChart();
     }
     
@@ -204,7 +194,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const el = document.createElement('div');
             el.className = 'bg-gray-800 p-6 rounded-lg';
             const lecturesHtml = s.lectures.map(l => {
-                const isFinished = l.studied >= l.uni_lecs;
+                const isFinished = l.uni_lecs > 0 && l.studied >= l.uni_lecs;
                 return `
                 <tr class="${isFinished ? 'bg-green-900/50' : ''}">
                     <td class="p-2">${l.lecture_number}</td>
@@ -252,7 +242,7 @@ document.addEventListener('DOMContentLoaded', function() {
     async function downloadPlayerReport() {
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF();
-        const stats = await apiRequest('/api/basketball/report_data');
+        const { stats } = await apiRequest('/api/basketball/data');
 
         doc.setFontSize(18);
         doc.text("Player Stats Report", 14, 22);
@@ -261,12 +251,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const tableRows = [];
 
         stats.forEach(player => {
-            const playerData = [
-                player.name,
-                player.PTS,
-                `${player.FGM}/${player.FGA}`,
-                player.AST
-            ];
+            const playerData = [ player.name, player.PTS, `${player.FGM}/${player.FGA}`, player.AST ];
             tableRows.push(playerData);
         });
 
@@ -280,8 +265,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     async function renderPlayerStats() {
-        const { players } = await apiRequest('/api/basketball/data');
-        const stats = await apiRequest('/api/basketball/report_data');
+        const { stats } = await apiRequest('/api/basketball/data');
         const container = document.getElementById('bball-stats');
         let tableHTML = `
             <div class="bg-gray-800 p-4 rounded-lg">
