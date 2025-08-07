@@ -3,6 +3,7 @@ import os
 from flask import Flask, render_template, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
+from sqlalchemy.orm import joinedload, selectinload
 from datetime import datetime, date, timedelta
 import json
 
@@ -76,11 +77,11 @@ class Course(db.Model):
     total_units = db.Column(db.Integer, default=0)
     target_date = db.Column(db.Date, nullable=True)
     sessions_per_week = db.Column(db.Integer, default=1)
-    units = db.relationship('CourseUnit', backref='course', lazy=True, cascade="all, delete-orphan")
+    units = db.relationship('CourseUnit', backref='course', lazy="selectin", cascade="all, delete-orphan")
     
     @property
     def completed_units(self):
-        return CourseUnit.query.filter_by(course_id=self.id, is_complete=True).count()
+        return len([unit for unit in self.units if unit.is_complete])
 
 class CourseUnit(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -230,7 +231,7 @@ def reset_data(section):
 # --- Subject/Lecture Routes ---
 @app.route('/api/subjects', methods=['GET'])
 def get_subjects():
-    subjects = Subject.query.options(db.joinedload(Subject.lectures)).order_by(Subject.id).all()
+    subjects = Subject.query.options(joinedload(Subject.lectures)).order_by(Subject.id).all()
     result = [{'lectures': sorted([to_dict(l) for l in s.lectures], key=lambda x: x['lecture_number']), **to_dict(s)} for s in subjects]
     return jsonify(result)
 
@@ -257,14 +258,14 @@ def update_lecture(lecture_id):
     lecture.uni_lecs = data.get('uni_lecs', lecture.uni_lecs)
     lecture.studied = data.get('studied', lecture.studied)
     lecture.revised = data.get('revised', lecture.revised)
-    lecture.finished_date = date.today() if (lecture.uni_lecs > 0 and lecture.studied >= lecture.uni_lecs) else None
+    lecture.finished_date = date.today() if (lecture.uni_lecs > 0 and lecture.studied is not None and lecture.studied >= lecture.uni_lecs) else None
     db.session.commit()
     return jsonify(to_dict(lecture))
 
 # --- Course Routes ---
 @app.route('/api/courses', methods=['GET'])
 def get_courses():
-    courses = Course.query.all()
+    courses = Course.query.options(selectinload(Course.units)).all()
     result = []
     for c in courses:
         course_dict = to_dict(c)
@@ -344,7 +345,7 @@ def get_todays_workout():
         
     return jsonify({'name': plan.workout_name, 'exercises': result_exercises})
 
-# --- Other Routes (FIXED SYNTAX) ---
+# --- Other Routes ---
 @app.route('/api/pomodoro', methods=['POST'])
 def log_pomodoro():
     data = request.json
