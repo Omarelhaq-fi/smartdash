@@ -443,5 +443,18 @@ def add_flashcard():
 def get_schedule():
     return jsonify([to_dict(e) for e in CustomEvent.query.filter_by(event_date=date.today()).all()])
 
+@app.route('/api/mistakes', methods=['POST'])
+def add_mistake():
+    data = request.json
+    new_mistake = Mistake(topic=data['topic'], description=data['description'], subject_id=data['subject_id'])
+    db.session.add(new_mistake)
+    db.session.commit()
+    return jsonify(to_dict(new_mistake)), 201
+
+@app.route('/api/flashcards/<int:subject_id>/<int:lecture_id>', methods=['GET'])
+def get_flashcards(subject_id, lecture_id):
+    flashcards = Flashcard.query.filter_by(subject_id=subject_id, lecture_id=lecture_id).all()
+    return jsonify([to_dict(f) for f in flashcards])
+
 if __name__ == '__main__':
     app.run(debug=True)
