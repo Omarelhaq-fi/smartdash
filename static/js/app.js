@@ -160,13 +160,31 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- RENDER FUNCTIONS (Dashboard, Subjects, Courses etc. are mostly unchanged) ---
     async function renderDashboardMetrics() {
         const data = await apiRequest('/api/dashboard_metrics');
+        const todaySchedule = await apiRequest('/api/schedule');
+        
         document.getElementById('pomodoroDaily').textContent = formatTime(data.pomodoro.daily, true);
         document.getElementById('pomodoroWeekly').textContent = formatTime(data.pomodoro.weekly, true);
         document.getElementById('pomodoroMonthly').textContent = formatTime(data.pomodoro.monthly, true);
+        
         const examContainer = document.getElementById('examCountdownContainer');
         examContainer.innerHTML = data.exams.length === 0 ? '<p class="text-gray-400">No upcoming exams.</p>' : data.exams.map(exam => `<div class="mb-2"><p><strong>${exam.name}</strong> is in <span class="text-blue-400 font-bold">${Math.max(0, Math.ceil((new Date(exam.date) - new Date()) / (1000 * 60 * 60 * 24)))} days</span></p></div>`).join('');
+        
         const weakTopicsList = document.getElementById('weakTopicsList');
         weakTopicsList.innerHTML = data.weak_topics.length === 0 ? '<li>No mistakes logged.</li>' : data.weak_topics.map(m => `<li>${m.topic} (${m.subject_name})</li>`).join('');
+
+        // Render Notifications
+        const notificationsContainer = document.getElementById('dashboard-notifications');
+        notificationsContainer.innerHTML = ''; // Clear previous notifications
+        
+        const hasGymWorkout = todaySchedule.some(event => event.event_type === 'gym_workout');
+        if (hasGymWorkout) {
+            notificationsContainer.innerHTML += `<p class="text-red-400"><i class="fas fa-dumbbell"></i> You have a gym workout today!</p>`;
+        }
+        
+        // Add back the other notifications if they are still relevant
+        // notificationsContainer.innerHTML += `<p class="text-gray-400"><i class="fas fa-bell text-blue-400"></i> You haven’t studied Radiology in 4 days.</p>`;
+        // notificationsContainer.innerHTML += `<p class="text-gray-400"><i class="fas fa-fire text-orange-500"></i> 5-day study streak! Keep it up!</p>`;
+
         renderWeeklyChart();
     }
     
@@ -211,7 +229,30 @@ document.addEventListener('DOMContentLoaded', function() {
     async function saveCustomEvent() { const modal = document.getElementById('customEventModal'); const data = { title: modal.querySelector('#customEventTitle').value, start_time: modal.querySelector('#customEventStart').value, end_time: modal.querySelector('#customEventEnd').value, color: modal.querySelector('#customEventColor').value }; if (data.title && data.start_time && data.end_time) { await apiRequest('/api/schedule', 'POST', data); modal.style.display = 'none'; renderSchedule(); } }
 
     // --- GYM FUNCTIONS ---
-    function renderTodaysWorkout() { document.getElementById('gym-today').innerHTML = '<p class="text-gray-400">Today\'s workout plan coming soon...</p>'; }
+    async function renderTodaysWorkout() {
+        const todaySchedule = await apiRequest('/api/schedule');
+        const todayWorkout = todaySchedule.filter(event => event.event_type === 'gym_workout');
+        const container = document.getElementById('gym-today');
+
+        if (todayWorkout.length === 0) {
+            container.innerHTML = '<p class="text-gray-400">No workout scheduled for today. Add one in the planner!</p>';
+        } else {
+            const workoutHtml = todayWorkout.map(w => {
+                const exercises = w.description.replace('Workout: ', '').split(', ');
+                const exercisesHtml = exercises.map(ex => `<li>${ex}</li>`).join('');
+                return `
+                    <div class="bg-gray-800 p-4 rounded-lg">
+                        <h3 class="font-bold text-lg">${w.title}</h3>
+                        <p class="text-sm text-gray-400 mb-2">${w.start_time.substring(0, 5)} - ${w.end_time.substring(0, 5)}</p>
+                        <ul class="list-disc list-inside text-sm text-gray-300">
+                            ${exercisesHtml}
+                        </ul>
+                    </div>
+                `;
+            }).join('');
+            container.innerHTML = `<h2 class="text-2xl font-semibold mb-4">Today's Plan</h2><div class="space-y-4">${workoutHtml}</div>`;
+        }
+    }
     async function renderGymPlanner() {
         const schedules = await apiRequest('/api/gym/schedule');
         const container = document.getElementById('gym-planner');
