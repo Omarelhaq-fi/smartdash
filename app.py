@@ -3,20 +3,19 @@ import os
 from flask import Flask, render_template, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
-from datetime import datetime, date, timedelta, time
+from datetime import datetime, date, timedelta
 
 app = Flask(__name__)
 
 # --- Database Configuration ---
-# It's recommended to use environment variables for credentials in a real application
-USER = os.environ.get('DB_USER', 'abc901_elhaqom')
-PASSWORD = os.environ.get('DB_PASSWORD', 'omarreda123')
-SERVER = os.environ.get('DB_SERVER', 'mysql6013.site4now.net')
-DATABASE = os.environ.get('DB_DATABASE', 'db_abc901_elhaqom')
+USER = 'abc901_elhaqom'
+PASSWORD = 'omarreda123'
+SERVER = 'mysql6013.site4now.net'
+DATABASE = 'db_abc901_elhaqom'
 
 app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{USER}:{PASSWORD}@{SERVER}/{DATABASE}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ECHO'] = False 
+app.config['SQLALCHEMY_ECHO'] = False # Set to True to see generated SQL in your terminal
 
 db = SQLAlchemy(app)
 
@@ -36,14 +35,14 @@ class Lecture(db.Model):
     uni_lecs = db.Column(db.Integer, default=1)
     studied = db.Column(db.Integer, default=0)
     revised = db.Column(db.Boolean, default=False)
-    total_time = db.Column(db.Integer, default=0) 
-    pomodoros_done = db.Column(db.Integer, default=0)
-    finished_date = db.Column(db.Date, nullable=True)
+    total_time = db.Column(db.Integer, default=0) # in seconds
+    pomodoros_done = db.Column(db.Integer, default=0) # New field
+    finished_date = db.Column(db.Date, nullable=True) # New field
 
 class Flashcard(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=False)
-    lecture_id = db.Column(db.Integer, nullable=False)
+    lecture_id = db.Column(db.Integer, nullable=False) # Maps to lecture_number
     front = db.Column(db.Text, nullable=False)
     back = db.Column(db.Text, nullable=False)
 
@@ -61,9 +60,9 @@ class Mistake(db.Model):
 class PomodoroLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.DateTime, default=datetime.utcnow)
-    duration = db.Column(db.Integer, nullable=False)
+    duration = db.Column(db.Integer, nullable=False) # in seconds
     subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=True)
-    lecture_id = db.Column(db.Integer, nullable=True)
+    lecture_id = db.Column(db.Integer, nullable=True) # Maps to lecture_number
 
 class Course(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -108,15 +107,18 @@ class GymSessionLog(db.Model):
     reps = db.Column(db.Integer)
     weight = db.Column(db.Float)
 
-# NEW: Gym Schedule Model
-class GymSchedule(db.Model):
+
+
+class GymPlanner(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    date = db.Column(db.Date, nullable=False)
-    start_time = db.Column(db.Time, nullable=False)
-    end_time = db.Column(db.Time, nullable=False)
-    workout_name = db.Column(db.String(150), nullable=False)
-    notes = db.Column(db.Text, nullable=True)
-    
+    title = db.Column(db.String(150), nullable=False)
+    event_date = db.Column(db.Date, nullable=True)  # specific date
+    day_of_week = db.Column(db.Integer, nullable=True) # 0=Monday ... 6=Sunday
+    start_time = db.Column(db.Time, nullable=True)
+    end_time = db.Column(db.Time, nullable=True)
+    exercises = db.Column(db.JSON)  # list of exercise ids or names
+
+
 # --- Basketball Models ---
 class BasketballPlayer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -139,13 +141,14 @@ class Shot(db.Model):
     player_id = db.Column(db.Integer, db.ForeignKey('basketball_player.id'), nullable=False)
     player = db.relationship('BasketballPlayer')
 
+
 # --- Helper Functions ---
 def to_dict(model_instance):
     if model_instance is None: return None
     d = {}
     for column in model_instance.__table__.columns:
         value = getattr(model_instance, column.name)
-        if isinstance(value, (datetime, date, time)):
+        if isinstance(value, (datetime, date, db.Model.metadata.tables['custom_event'].c.start_time.type.python_type)):
             value = value.isoformat()
         d[column.name] = value
     return d
@@ -166,24 +169,52 @@ def index():
 
 # --- API Routes ---
 
-# Dashboard (Unchanged)
+# Dashboard
 @app.route('/api/dashboard_metrics', methods=['GET'])
 def get_dashboard_metrics():
     today = date.today()
+    
+    # Lecture Goal
+    lectures_finished_today = db.session.query(func.count(Lecture.id)).filter(Lecture.finished_date == today).scalar()
+    lecture_goal = 2 # Hardcoded for now, could be a setting
+    
+    # Gym Goal
+    gym_sessions_today = db.session.query(func.count(GymSessionLog.id)).filter(GymSessionLog.date == today).scalar()
+    gym_goal = 1 # Hardcoded
+    
+    # Course Goal
+    # This is a placeholder; real logic would be more complex
+    course_sessions_today = 0 
+    course_goal = 1
+
+    # Pomodoro Summary
     start_of_week = today - timedelta(days=today.weekday())
     start_of_month = today.replace(day=1)
     daily_total = db.session.query(func.sum(PomodoroLog.duration)).filter(func.date(PomodoroLog.date) == today).scalar() or 0
     weekly_total = db.session.query(func.sum(PomodoroLog.duration)).filter(PomodoroLog.date >= start_of_week).scalar() or 0
     monthly_total = db.session.query(func.sum(PomodoroLog.duration)).filter(PomodoroLog.date >= start_of_month).scalar() or 0
+    
     exams = Exam.query.order_by(Exam.date.asc()).all()
-    weak_topics = Mistake.query.join(Subject).with_entities(Mistake.topic, Subject.name.label('subject_name')).limit(5).all()
-    return jsonify({
+    weak_topics = Mistake.query.join(Subject).with_entities(Mistake.topic, Subject.name).limit(5).all()
+
+    
+    # Gym unfinished: find planners that apply today (by event_date == today or day_of_week == today.weekday())
+    planners_today = GymPlanner.query.filter((GymPlanner.event_date == today) | (GymPlanner.day_of_week == today.weekday())).all()
+    # If there is at least one planner today and no GymSessionLog for today, mark as unfinished
+    gym_logs_today = gym_sessions_today
+    gym_today_unfinished = True if planners_today and gym_logs_today == 0 else False
+return jsonify({
+        'goals': {
+            'lectures': {'current': lectures_finished_today, 'target': lecture_goal},
+            'gym': {'current': gym_sessions_today, 'target': gym_goal},
+            'courses': {'current': course_sessions_today, 'target': course_goal}
+        },
         'pomodoro': {'daily': daily_total, 'weekly': weekly_total, 'monthly': monthly_total},
         'exams': [to_dict(e) for e in exams],
-        'weak_topics': [{'topic': wt.topic, 'subject_name': wt.subject_name} for wt in weak_topics]
+        'weak_topics': [{'topic': wt[0], 'subject_name': wt[1]} for wt in weak_topics]
     })
 
-# Subjects & Lectures (Unchanged)
+# Subjects & Lectures
 @app.route('/api/subjects', methods=['GET'])
 def get_subjects():
     subjects = Subject.query.options(db.joinedload(Subject.lectures)).order_by(Subject.id).all()
@@ -195,13 +226,45 @@ def get_subjects():
     return jsonify(result)
 
 @app.route('/api/subjects', methods=['POST'])
-def add_subject(): data = request.json; new_subject = Subject(name=data['name']); db.session.add(new_subject); db.session.commit(); return jsonify(to_dict(new_subject)), 201
-@app.route('/api/subjects/<int:subject_id>/lectures', methods=['POST'])
-def add_lecture(subject_id): subject = Subject.query.get_or_404(subject_id); last_lecture = Lecture.query.filter_by(subject_id=subject_id).order_by(Lecture.lecture_number.desc()).first(); new_lecture_number = (last_lecture.lecture_number + 1) if last_lecture else 1; new_lecture = Lecture(subject_id=subject.id, lecture_number=new_lecture_number); db.session.add(new_lecture); db.session.commit(); return jsonify(to_dict(new_lecture)), 201
-@app.route('/api/lectures/<int:lecture_id>', methods=['PUT'])
-def update_lecture(lecture_id): data = request.json; lecture = Lecture.query.get_or_404(lecture_id); lecture.uni_lecs = data.get('uni_lecs', lecture.uni_lecs); lecture.studied = data.get('studied', lecture.studied); lecture.revised = data.get('revised', lecture.revised); db.session.commit(); return jsonify(to_dict(lecture))
+def add_subject():
+    data = request.json
+    if not data or 'name' not in data or not data['name'].strip(): return jsonify({'error': 'Subject name is required'}), 400
+    if Subject.query.filter_by(name=data['name'].strip()).first(): return jsonify({'error': 'Subject with this name already exists'}), 409
+    new_subject = Subject(name=data['name'].strip())
+    db.session.add(new_subject)
+    db.session.commit()
+    return jsonify(to_dict(new_subject)), 201
 
-# Exams, Mistakes, Courses (Unchanged)
+@app.route('/api/subjects/<int:subject_id>/lectures', methods=['POST'])
+def add_lecture(subject_id):
+    subject = Subject.query.get_or_404(subject_id)
+    last_lecture = Lecture.query.filter_by(subject_id=subject_id).order_by(Lecture.lecture_number.desc()).first()
+    new_lecture_number = (last_lecture.lecture_number + 1) if last_lecture else 1
+    new_lecture = Lecture(subject_id=subject.id, lecture_number=new_lecture_number)
+    db.session.add(new_lecture)
+    db.session.commit()
+    return jsonify(to_dict(new_lecture)), 201
+
+@app.route('/api/lectures/<int:lecture_id>', methods=['PUT'])
+def update_lecture(lecture_id):
+    data = request.json
+    lecture = Lecture.query.get_or_404(lecture_id)
+    
+    lecture.uni_lecs = data.get('uni_lecs', lecture.uni_lecs)
+    lecture.studied = data.get('studied', lecture.studied)
+    lecture.revised = data.get('revised', lecture.revised)
+    
+    # Check if the lecture is now finished
+    if lecture.studied is not None and lecture.uni_lecs is not None and lecture.studied >= lecture.uni_lecs:
+        if lecture.finished_date is None:
+            lecture.finished_date = date.today()
+    else:
+        lecture.finished_date = None # Reset if no longer finished
+
+    db.session.commit()
+    return jsonify(to_dict(lecture))
+
+# Exams, Mistakes, Courses, Schedule... (These routes are unchanged)
 @app.route('/api/exams', methods=['GET'])
 def get_exams(): return jsonify([to_dict(e) for e in Exam.query.order_by(Exam.date.asc()).all()])
 @app.route('/api/exams', methods=['POST'])
@@ -212,45 +275,30 @@ def add_mistake(): data = request.json; new_mistake = Mistake(topic=data['topic'
 def get_courses(): return jsonify([to_dict(c) for c in Course.query.all()])
 @app.route('/api/courses', methods=['POST'])
 def add_course(): data = request.json; new_course = Course(title=data.get('title'), platform=data.get('platform'), category=data.get('category'), total_units=data.get('total_units'), completed_units=data.get('completed_units'), target_date=datetime.strptime(data['target_date'], '%Y-%m-%d').date() if data.get('target_date') else None, sessions_per_week=data.get('sessions_per_week')); db.session.add(new_course); db.session.commit(); return jsonify(to_dict(new_course)), 201
-
-# Main Schedule Route - MODIFIED
 @app.route('/api/schedule', methods=['GET'])
-def get_schedule():
-    today = date.today()
-    events = []
-    
-    # Get custom events for today
-    custom_events = CustomEvent.query.filter_by(event_date=today).all()
-    for e in custom_events:
-        event_dict = to_dict(e)
-        # Ensure start_time and end_time are strings
-        event_dict['start_time'] = e.start_time.strftime('%H:%M')
-        event_dict['end_time'] = e.end_time.strftime('%H:%M')
-        events.append(event_dict)
-
-    # Get gym schedules for today and add them to the main schedule
-    gym_schedules = GymSchedule.query.filter_by(date=today).all()
-    for gs in gym_schedules:
-        events.append({
-            'id': f"gym-{gs.id}",
-            'title': gs.workout_name,
-            'start_time': gs.start_time.strftime('%H:%M'),
-            'end_time': gs.end_time.strftime('%H:%M'),
-            'color': 'red' # Assign a specific color for gym events
-        })
-        
-    return jsonify(events)
-
+def get_schedule(): return jsonify([to_dict(e) for e in CustomEvent.query.filter_by(event_date=date.today()).all()])
 @app.route('/api/schedule', methods=['POST'])
 def add_custom_event(): data = request.json; start_time = datetime.strptime(data['start_time'], '%H:%M').time(); end_time = datetime.strptime(data['end_time'], '%H:%M').time(); new_event = CustomEvent(title=data.get('title'), start_time=start_time, end_time=end_time, color=data.get('color', 'purple')); db.session.add(new_event); db.session.commit(); return jsonify(to_dict(new_event)), 201
-
-# Flashcards & Pomodoro (Unchanged)
 @app.route('/api/subjects/<int:subject_id>/lectures/<int:lecture_id>/flashcards', methods=['GET'])
 def get_flashcards(subject_id, lecture_id): return jsonify([to_dict(f) for f in Flashcard.query.filter_by(subject_id=subject_id, lecture_id=lecture_id).all()])
 @app.route('/api/flashcards', methods=['POST'])
 def add_flashcard(): data = request.json; new_flashcard = Flashcard(subject_id=data['subject_id'], lecture_id=data['lecture_id'], front=data['front'], back=data['back']); db.session.add(new_flashcard); db.session.commit(); return jsonify(to_dict(new_flashcard)), 201
+
+# --- Pomodoro Route ---
 @app.route('/api/pomodoro', methods=['POST'])
-def log_pomodoro(): data = request.json; log = PomodoroLog(duration=data['duration'], subject_id=data.get('subject_id'), lecture_id=data.get('lecture_id')); db.session.add(log); db.session.commit(); return jsonify(to_dict(log)), 201
+def log_pomodoro():
+    data = request.json
+    log = PomodoroLog(duration=data['duration'], subject_id=data.get('subject_id'), lecture_id=data.get('lecture_id'))
+    db.session.add(log)
+    
+    if data.get('subject_id') and data.get('lecture_id'):
+        lecture = Lecture.query.filter_by(subject_id=data['subject_id'], id=data['lecture_id']).first()
+        if lecture:
+            lecture.total_time = (lecture.total_time or 0) + data['duration']
+            lecture.pomodoros_done = (lecture.pomodoros_done or 0) + 1
+
+    db.session.commit()
+    return jsonify(to_dict(log)), 201
 
 # --- Gym API Routes ---
 @app.route('/api/gym/exercises', methods=['GET'])
@@ -258,66 +306,94 @@ def get_exercises(): return jsonify([to_dict(ex) for ex in Exercise.query.all()]
 @app.route('/api/gym/exercises', methods=['POST'])
 def add_exercise(): data = request.json; new_ex = Exercise(name=data['name'], group=data['group'], cues=data['cues'], tags=data['tags']); db.session.add(new_ex); db.session.commit(); return jsonify(to_dict(new_ex)), 201
 @app.route('/api/gym/prs', methods=['GET'])
-def get_prs(): prs = PR.query.join(Exercise).with_entities(PR, Exercise.name.label('exercise_name')).order_by(PR.date.desc()).all(); result = []; [result.append({**to_dict(pr), 'exercise_name': ex_name}) for pr, ex_name in prs]; return jsonify(result)
+def get_prs(): prs = PR.query.join(Exercise).with_entities(PR, Exercise.name).order_by(PR.date.desc()).all(); result = []; [result.append({**to_dict(pr), 'exercise_name': ex_name}) for pr, ex_name in prs]; return jsonify(result)
+@app.route('/api/gym/planner', methods=['GET'])
+def get_gym_planner():
+    planners = GymPlanner.query.order_by(GymPlanner.event_date.asc().nullsfirst(), GymPlanner.day_of_week.asc().nullsfirst()).all()
+    return jsonify([to_dict(p) for p in planners])
 
-# NEW: Gym Schedule API Routes
-@app.route('/api/gym/schedule', methods=['GET'])
-def get_gym_schedule():
-    schedules = GymSchedule.query.order_by(GymSchedule.date, GymSchedule.start_time).all()
-    return jsonify([to_dict(s) for s in schedules])
-
-@app.route('/api/gym/schedule', methods=['POST'])
-def add_gym_schedule():
+@app.route('/api/gym/planner', methods=['POST'])
+def add_gym_planner():
     data = request.json
-    try:
-        new_schedule = GymSchedule(
-            date=datetime.strptime(data['date'], '%Y-%m-%d').date(),
-            start_time=datetime.strptime(data['start_time'], '%H:%M').time(),
-            end_time=datetime.strptime(data['end_time'], '%H:%M').time(),
-            workout_name=data['workout_name'],
-            notes=data.get('notes')
-        )
-        db.session.add(new_schedule)
-        db.session.commit()
-        return jsonify(to_dict(new_schedule)), 201
-    except (KeyError, ValueError) as e:
-        return jsonify({'error': f'Invalid data provided: {e}'}), 400
-
-@app.route('/api/gym/schedule/<int:schedule_id>', methods=['DELETE'])
-def delete_gym_schedule(schedule_id):
-    schedule_item = GymSchedule.query.get_or_404(schedule_id)
-    db.session.delete(schedule_item)
+    title = data.get('title') or 'Gym Session'
+    event_date = None
+    if data.get('event_date'):
+        try:
+            event_date = datetime.strptime(data.get('event_date'), '%Y-%m-%d').date()
+        except:
+            event_date = None
+    day_of_week = data.get('day_of_week')
+    start_time = datetime.strptime(data['start_time'], '%H:%M').time() if data.get('start_time') else None
+    end_time = datetime.strptime(data['end_time'], '%H:%M').time() if data.get('end_time') else None
+    exercises = data.get('exercises', [])
+    new_planner = GymPlanner(title=title, event_date=event_date, day_of_week=day_of_week, start_time=start_time, end_time=end_time, exercises=exercises)
+    db.session.add(new_planner)
+    # Also create a matching CustomEvent if a concrete event_date is provided
+    if event_date:
+        ev = CustomEvent(title=title, start_time=start_time or datetime.strptime('18:00','%H:%M').time(), end_time=end_time or datetime.strptime('19:00','%H:%M').time(), event_date=event_date, color='yellow')
+        db.session.add(ev)
     db.session.commit()
-    return jsonify({'message': 'Schedule deleted'}), 200
+    return jsonify(to_dict(new_planner)), 201
 
-# --- Basketball API Routes (Unchanged) ---
+@app.route('/api/gym/planner/<int:planner_id>', methods=['DELETE'])
+def delete_gym_planner(planner_id):
+    pl = GymPlanner.query.get_or_404(planner_id)
+    db.session.delete(pl)
+    db.session.commit()
+    return jsonify({'status':'deleted'}), 200
+
+
+# --- Basketball API Routes ---
 @app.route('/api/basketball/players', methods=['POST'])
 def add_bball_player(): data = request.json; name = data['name'].strip(); new_player = BasketballPlayer(name=name); db.session.add(new_player); db.session.commit(); return jsonify(to_dict(new_player)), 201
-
 @app.route('/api/basketball/data', methods=['GET'])
 def get_bball_data():
     players = BasketballPlayer.query.all()
     tags = VideoTag.query.options(db.joinedload(VideoTag.player)).order_by(VideoTag.time).all()
-    shots = Shot.query.all()
-    stats = {p.id: {'name': p.name, 'FGM': 0, 'FGA': 0, 'AST': 0, 'PTS': 0} for p in players}
-    shot_tags = VideoTag.query.filter(VideoTag.stat_type.in_(['fga_made', 'fga_missed', 'ast'])).all()
-    for tag in shot_tags:
-        if tag.player_id not in stats: continue
-        if tag.stat_type == 'fga_made':
-            stats[tag.player_id]['FGM'] += 1
-            stats[tag.player_id]['FGA'] += 1
-            stats[tag.player_id]['PTS'] += 2
-        elif tag.stat_type == 'fga_missed':
-            stats[tag.player_id]['FGA'] += 1
-        elif tag.stat_type == 'ast':
-            stats[tag.player_id]['AST'] += 1
-
+    shots = Shot.query.options(db.joinedload(Shot.player)).all()
     return jsonify({
         'players': [to_dict(p) for p in players],
         'tags': [{**to_dict(t), 'player_name': t.player.name} for t in tags],
-        'shots': [to_dict(s) for s in shots],
-        'stats': list(stats.values())
+        'shots': [to_dict(s) for s in shots]
     })
+
+@app.route('/api/basketball/report_data', methods=['GET'])
+
+def get_bball_report_data():
+    players = BasketballPlayer.query.all()
+    stats = {p.id: {'name': p.name, 'FGM': 0, 'FGA': 0, 'AST': 0, 'REB': 0, 'STL': 0, 'TO': 0, 'BLK': 0, 'FOUL': 0, 'PTS': 0, 'MIN': 0} for p in players}
+    tags = VideoTag.query.all()
+    for tag in tags:
+        pid = tag.player_id
+        if pid not in stats:
+            continue
+        st = (tag.stat_type or '').lower()
+        if st == 'fga_made':
+            stats[pid]['FGM'] += 1
+            stats[pid]['FGA'] += 1
+        elif st == 'fga_missed':
+            stats[pid]['FGA'] += 1
+        elif st == 'ast' or st == 'assist':
+            stats[pid]['AST'] += 1
+        elif st == 'reb' or st == 'rebound':
+            stats[pid]['REB'] += 1
+        elif st == 'stl' or st == 'steal':
+            stats[pid]['STL'] += 1
+        elif st == 'to' or st == 'turnover':
+            stats[pid]['TO'] += 1
+        elif st == 'blk' or st == 'block':
+            stats[pid]['BLK'] += 1
+        elif st == 'foul':
+            stats[pid]['FOUL'] += 1
+        elif st == 'min':
+            try:
+                stats[pid]['MIN'] += int(tag.action) if tag.action and str(tag.action).isdigit() else 0
+            except:
+                pass
+    for p_id in stats:
+        stats[p_id]['PTS'] = stats[p_id]['FGM'] * 2
+    return jsonify(list(stats.values()))
+
 
 @app.route('/api/basketball/tags', methods=['POST'])
 def add_bball_tag(): data = request.json; new_tag = VideoTag(time=data['time'], player_id=data['player_id'], category=data['category'], action=data['action'], stat_type=data['stat_type']); db.session.add(new_tag); db.session.commit(); return jsonify(to_dict(new_tag)), 201
@@ -326,3 +402,42 @@ def add_bball_shot(): data = request.json; player_id = data.get('player_id', 1);
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
+@app.route('/api/gym/log', methods=['POST'])
+def create_gym_log():
+    data = request.json or {}
+    planner_id = data.get('planner_id')
+    # If planner provided, create a GymSessionLog for today linked to first exercise if available
+    today = date.today()
+    if planner_id:
+        pl = GymPlanner.query.get(planner_id)
+        if pl:
+            ex_name = None
+            ex = None
+            if pl.exercises and isinstance(pl.exercises, list) and len(pl.exercises)>0:
+                # try to find exercise by name
+                ex_name = pl.exercises[0]
+                ex = Exercise.query.filter_by(name=ex_name).first()
+            if not ex:
+                # fallback pick any exercise
+                ex = Exercise.query.first()
+            if not ex:
+                # create a placeholder exercise
+                ex = Exercise(name='General Gym')
+                db.session.add(ex)
+                db.session.commit()
+            log = GymSessionLog(exercise_id=ex.id, date=today, sets=0, reps=0, weight=0)
+            db.session.add(log)
+            db.session.commit()
+            return jsonify(to_dict(log)), 201
+    # otherwise create a simple log
+    ex = Exercise.query.first()
+    if not ex:
+        ex = Exercise(name='General Gym')
+        db.session.add(ex)
+        db.session.commit()
+    log = GymSessionLog(exercise_id=ex.id, date=today, sets=data.get('sets',0), reps=data.get('reps',0), weight=data.get('weight',0))
+    db.session.add(log)
+    db.session.commit()
+    return jsonify(to_dict(log)), 201
