@@ -440,4 +440,4 @@ def create_gym_log():
     log = GymSessionLog(exercise_id=ex.id, date=today, sets=data.get('sets',0), reps=data.get('reps',0), weight=data.get('weight',0))
     db.session.add(log)
     db.session.commit()
-    return jsonify(to_dict(log)), 201
+    return jsonify(to_dict(log)), 201 
