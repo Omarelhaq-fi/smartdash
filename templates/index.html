@@ -20,7 +20,7 @@
         .tab-link { padding: 0.5rem 1rem; border-bottom: 2px solid transparent; color: #9ca3af; }
         .tab-link.active, .tab-link:hover { color: #38bdf8; border-bottom-color: #38bdf8; }
         /* Modal Styles */
-        .modal { position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; animation: fadeIn 0.3s; }
+        .modal { position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; animation: fadeIn 0.3s; }
         .modal-content { background-color: #1f2937; margin: auto; padding: 2rem; border-radius: 0.5rem; width: 90%; max-width: 500px; position: relative; border: 1px solid #374151; }
         /* Toggle Switch */
         .toggle-switch { position: relative; display: inline-block; width: 50px; height: 28px; }
@@ -79,7 +79,12 @@
         <section id="dashboard" class="page">
             <h1 class="text-3xl font-bold mb-6">Dashboard</h1>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Daily Goals</h2><p class="text-gray-400">Goal: <strong class="text-blue-400">2 lectures</strong> per day.</p><div class="mt-4"><p>Progress: <span id="dailyProgress">0</span> / 2</p><div class="w-full bg-gray-700 rounded-full h-2.5 mt-2"><div id="dailyProgressBar" class="bg-blue-500 h-2.5 rounded-full" style="width: 0%"></div></div></div></div>
+                <!-- NEW: Live Clock Card -->
+                <div class="bg-gray-800 p-6 rounded-lg flex flex-col items-center justify-center text-center">
+                    <h2 class="text-xl font-semibold mb-2 text-blue-400">Time in Cairo</h2>
+                    <p id="cairoTimeDisplay" class="text-4xl font-mono font-bold">00:00:00</p>
+                    <p id="cairoDateDisplay" class="text-md text-gray-400">Loading date...</p>
+                </div>
                 <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Exam Countdown</h2><div id="examCountdownContainer"><p class="text-gray-400">Loading...</p></div></div>
                 <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Pomodoro Summary</h2><div class="flex justify-around text-center"><div><p class="text-2xl font-bold" id="pomodoroDaily">0h 0m</p><p class="text-gray-400">Today</p></div><div><p class="text-2xl font-bold" id="pomodoroWeekly">0h 0m</p><p class="text-gray-400">Week</p></div><div><p class="text-2xl font-bold" id="pomodoroMonthly">0h 0m</p><p class="text-gray-400">Month</p></div></div></div>
                 <div class="bg-gray-800 p-6 rounded-lg md:col-span-2 h-96"><h2 class="text-xl font-semibold mb-4">Weekly Study Hours</h2><canvas id="weeklyStudyChart"></canvas></div>
@@ -167,13 +172,6 @@
     <div id="gymScheduleModal" class="modal"></div>
     <div id="taggingModal" class="modal"></div>
     <div id="shotModal" class="modal"></div>
-    <div id="timePopupModal" class="modal" style="display: none; background-color: rgba(0,0,0,0.7);">
-        <div class="modal-content !bg-gray-900 !border !border-blue-500 !shadow-lg !shadow-blue-500/20 max-w-sm text-center">
-            <h2 id="cairoTimeHeader" class="text-xl font-bold mb-2 text-blue-400">Current Time in Cairo</h2>
-            <p id="cairoTimeDisplay" class="text-4xl font-mono"></p>
-            <p id="cairoDateDisplay" class="text-lg text-gray-400"></p>
-        </div>
-    </div>
     
     <script src="/static/js/app.js"></script>
 </body>
