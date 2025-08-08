@@ -71,7 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function loadPageData(pageId) {
         switch(pageId) {
-            case 'dashboard': renderDashboardMetrics(); break;
+            case 'dashboard': renderDashboardMetrics(); updateDateTime(); break;
             case 'subjects': renderSubjects(); break;
             case 'courses': renderCourses(); break;
             case 'schedule': renderSchedule(); break;
@@ -350,7 +350,6 @@ document.addEventListener('DOMContentLoaded', function() {
     async function saveGymWorkout() {
         const modal = document.getElementById('gymScheduleModal');
         const exercises = Array.from(modal.querySelectorAll('#selectedExercisesContainer > div')).map(el => ({
-            id: el.querySelector('input[name="exerciseId"]').value,
             name: el.querySelector('span').textContent,
             sets: el.querySelector('input[name="sets"]').value,
             reps: el.querySelector('input[name="reps"]').value,
@@ -495,6 +494,27 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     function renderLineupImpact() { document.getElementById('bball-lineups').innerHTML = '<p class="text-gray-400">Lineup analysis coming soon.</p>'; }
     function renderGameReport() { document.getElementById('bball-report').innerHTML = '<p class="text-gray-400">Game reports coming soon.</p>'; }
+    
+    function updateDateTime() {
+        const datetimeElement = document.getElementById('datetimeDisplay');
+        if (!datetimeElement) return;
+
+        const now = new Date();
+        const options = {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            timeZone: 'Africa/Cairo',
+            timeZoneName: 'short'
+        };
+
+        const formattedDate = new Intl.DateTimeFormat('en-US', options).format(now);
+        datetimeElement.textContent = formattedDate;
+    }
 
     // --- UTILITY FUNCTIONS ---
     function formatTime(seconds, short = false) { if (isNaN(seconds) || seconds < 0) return "0m"; const h = Math.floor(seconds / 3600); const m = Math.floor((seconds % 3600) / 60); return short ? `${h}h ${m}m` : `${h}h ${m}m`; }
@@ -506,4 +526,5 @@ document.addEventListener('DOMContentLoaded', function() {
     setupNavigation();
     loadPageData('dashboard'); // Load initial page
     updateTimerDisplay();
+    setInterval(updateDateTime, 1000); // Update every second
 });
