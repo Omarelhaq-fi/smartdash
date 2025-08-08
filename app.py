@@ -91,6 +91,22 @@ class Exercise(db.Model):
     tags = db.Column(db.JSON)
     prs = db.relationship('PR', backref='exercise', lazy=True, cascade="all, delete-orphan")
     sessions = db.relationship('GymSessionLog', backref='exercise', lazy=True)
+    
+class GymSchedule(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    day_of_week = db.Column(db.Integer, nullable=False) # 0=Monday, 6=Sunday
+    workout_name = db.Column(db.String(100), nullable=False)
+    start_time = db.Column(db.Time, nullable=False)
+    end_time = db.Column(db.Time, nullable=False)
+    exercises = db.relationship('WorkoutExercise', backref='schedule', lazy=True, cascade="all, delete-orphan")
+    
+class WorkoutExercise(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    schedule_id = db.Column(db.Integer, db.ForeignKey('gym_schedule.id'), nullable=False)
+    exercise_id = db.Column(db.Integer, db.ForeignKey('exercise.id'), nullable=False)
+    exercise = db.relationship('Exercise', backref='workout_exercises', lazy=True)
+    sets = db.Column(db.Integer, default=3)
+    reps = db.Column(db.String(50), default='8-12') # e.g., '8-12', '5x5'
 
 class PR(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -246,7 +262,7 @@ def update_lecture(lecture_id):
     db.session.commit()
     return jsonify(to_dict(lecture))
 
-# Exams, Mistakes, Courses, Schedule... (These routes are unchanged)
+# Exams, Mistakes, Courses, Flashcards... (These routes are unchanged)
 @app.route('/api/exams', methods=['GET'])
 def get_exams(): return jsonify([to_dict(e) for e in Exam.query.order_by(Exam.date.asc()).all()])
 @app.route('/api/exams', methods=['POST'])
@@ -257,14 +273,33 @@ def add_mistake(): data = request.json; new_mistake = Mistake(topic=data['topic'
 def get_courses(): return jsonify([to_dict(c) for c in Course.query.all()])
 @app.route('/api/courses', methods=['POST'])
 def add_course(): data = request.json; new_course = Course(title=data.get('title'), platform=data.get('platform'), category=data.get('category'), total_units=data.get('total_units'), completed_units=data.get('completed_units'), target_date=datetime.strptime(data['target_date'], '%Y-%m-%d').date() if data.get('target_date') else None, sessions_per_week=data.get('sessions_per_week')); db.session.add(new_course); db.session.commit(); return jsonify(to_dict(new_course)), 201
-@app.route('/api/schedule', methods=['GET'])
-def get_schedule(): return jsonify([to_dict(e) for e in CustomEvent.query.filter_by(event_date=date.today()).all()])
-@app.route('/api/schedule', methods=['POST'])
-def add_custom_event(): data = request.json; start_time = datetime.strptime(data['start_time'], '%H:%M').time(); end_time = datetime.strptime(data['end_time'], '%H:%M').time(); new_event = CustomEvent(title=data.get('title'), start_time=start_time, end_time=end_time, color=data.get('color', 'purple')); db.session.add(new_event); db.session.commit(); return jsonify(to_dict(new_event)), 201
 @app.route('/api/subjects/<int:subject_id>/lectures/<int:lecture_id>/flashcards', methods=['GET'])
 def get_flashcards(subject_id, lecture_id): return jsonify([to_dict(f) for f in Flashcard.query.filter_by(subject_id=subject_id, lecture_id=lecture_id).all()])
 @app.route('/api/flashcards', methods=['POST'])
 def add_flashcard(): data = request.json; new_flashcard = Flashcard(subject_id=data['subject_id'], lecture_id=data['lecture_id'], front=data['front'], back=data['back']); db.session.add(new_flashcard); db.session.commit(); return jsonify(to_dict(new_flashcard)), 201
+
+# --- Schedule Route ---
+@app.route('/api/schedule', methods=['GET'])
+def get_schedule():
+    today = date.today()
+    day_of_week = (today.weekday() - 1 + 7) % 7 # Monday = 0
+    custom_events = CustomEvent.query.filter_by(event_date=today).all()
+    gym_schedules = GymSchedule.query.filter_by(day_of_week=day_of_week).options(db.joinedload(GymSchedule.exercises).joinedload(WorkoutExercise.exercise)).all()
+
+    # Combine and format events
+    events = [to_dict(e) for e in custom_events]
+    for s in gym_schedules:
+        schedule_dict = to_dict(s)
+        schedule_dict['title'] = s.workout_name
+        schedule_dict['color'] = 'green' # Use a distinct color for gym workouts
+        schedule_dict['event_type'] = 'gym_workout'
+        schedule_dict['description'] = 'Workout: ' + ', '.join([e.exercise.name for e in s.exercises])
+        events.append(schedule_dict)
+    
+    return jsonify(events)
+
+@app.route('/api/schedule', methods=['POST'])
+def add_custom_event(): data = request.json; start_time = datetime.strptime(data['start_time'], '%H:%M').time(); end_time = datetime.strptime(data['end_time'], '%H:%M').time(); new_event = CustomEvent(title=data.get('title'), start_time=start_time, end_time=end_time, color=data.get('color', 'purple')); db.session.add(new_event); db.session.commit(); return jsonify(to_dict(new_event)), 201
 
 # --- Pomodoro Route ---
 @app.route('/api/pomodoro', methods=['POST'])
@@ -289,6 +324,42 @@ def get_exercises(): return jsonify([to_dict(ex) for ex in Exercise.query.all()]
 def add_exercise(): data = request.json; new_ex = Exercise(name=data['name'], group=data['group'], cues=data['cues'], tags=data['tags']); db.session.add(new_ex); db.session.commit(); return jsonify(to_dict(new_ex)), 201
 @app.route('/api/gym/prs', methods=['GET'])
 def get_prs(): prs = PR.query.join(Exercise).with_entities(PR, Exercise.name).order_by(PR.date.desc()).all(); result = []; [result.append({**to_dict(pr), 'exercise_name': ex_name}) for pr, ex_name in prs]; return jsonify(result)
+
+@app.route('/api/gym/schedule', methods=['GET'])
+def get_gym_schedule():
+    schedules = GymSchedule.query.options(db.joinedload(GymSchedule.exercises).joinedload(WorkoutExercise.exercise)).order_by(GymSchedule.day_of_week, GymSchedule.start_time).all()
+    result = []
+    for s in schedules:
+        schedule_dict = to_dict(s)
+        schedule_dict['exercises'] = [{'name': we.exercise.name, 'sets': we.sets, 'reps': we.reps} for we in s.exercises]
+        result.append(schedule_dict)
+    return jsonify(result)
+    
+@app.route('/api/gym/schedule', methods=['POST'])
+def add_gym_schedule():
+    data = request.json
+    new_schedule = GymSchedule(
+        day_of_week=data['day_of_week'],
+        workout_name=data['workout_name'],
+        start_time=datetime.strptime(data['start_time'], '%H:%M').time(),
+        end_time=datetime.strptime(data['end_time'], '%H:%M').time()
+    )
+    db.session.add(new_schedule)
+    db.session.commit()
+    
+    for ex_data in data['exercises']:
+        exercise = Exercise.query.filter_by(name=ex_data['name']).first()
+        if exercise:
+            new_we = WorkoutExercise(
+                schedule_id=new_schedule.id,
+                exercise_id=exercise.id,
+                sets=ex_data['sets'],
+                reps=ex_data['reps']
+            )
+            db.session.add(new_we)
+    db.session.commit()
+    
+    return jsonify(to_dict(new_schedule)), 201
 
 # --- Basketball API Routes ---
 @app.route('/api/basketball/players', methods=['POST'])
