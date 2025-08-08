@@ -37,7 +37,22 @@
         <section id="dashboard" class="page">
             <h1 class="text-3xl font-bold mb-6">Dashboard</h1>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Daily Goals</h2><p class="text-gray-400">Goal: <strong class="text-blue-400">2 lectures</strong> per day.</p><div class="mt-4"><p>Progress: <span id="dailyProgress">0</span> / 2</p><div class="w-full bg-gray-700 rounded-full h-2.5 mt-2"><div id="dailyProgressBar" class="bg-blue-500 h-2.5 rounded-full" style="width: 0%"></div></div></div></div>
+                <div class="bg-gray-800 p-6 rounded-lg">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold">Today</h2>
+                        <span id="datetimeDisplay" class="text-gray-400 text-sm"></span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 text-center">
+                        <div>
+                            <p class="text-2xl font-bold" id="pomodoroDaily">0h 0m</p>
+                            <p class="text-gray-400 text-sm">Pomodoro</p>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold" id="gymSessionsToday">0</p>
+                            <p class="text-gray-400 text-sm">Gym Sessions</p>
+                        </div>
+                    </div>
+                </div>
                 <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Exam Countdown</h2><div id="examCountdownContainer"><p class="text-gray-400">Loading...</p></div></div>
                 <div class="bg-gray-800 p-6 rounded-lg"><h2 class="text-xl font-semibold mb-4">Pomodoro Summary</h2><div class="flex justify-around text-center"><div><p class="text-2xl font-bold" id="pomodoroDaily">0h 0m</p><p class="text-gray-400">Today</p></div><div><p class="text-2xl font-bold" id="pomodoroWeekly">0h 0m</p><p class="text-gray-400">Week</p></div><div><p class="text-2xl font-bold" id="pomodoroMonthly">0h 0m</p><p class="text-gray-400">Month</p></div></div></div>
                 <div class="bg-gray-800 p-6 rounded-lg md:col-span-2 h-96"><h2 class="text-xl font-semibold mb-4">Weekly Study Hours</h2><canvas id="weeklyStudyChart"></canvas></div>
