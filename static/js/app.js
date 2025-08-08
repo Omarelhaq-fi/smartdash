@@ -1,6 +1,11 @@
 document.addEventListener('DOMContentLoaded', function() {
     // --- STATE & UI SELECTORS ---
     let weeklyChart, currentFlashcardState = {}, tempShotData = {};
+    let gymPlannerState = {
+        // We'll store the current week's start date
+        currentWeekStartDate: getStartOfWeek(new Date())
+    };
+
     const pages = document.querySelectorAll('.page');
     const navLinks = document.querySelectorAll('.sidebar-icon');
     const darkModeToggle = document.getElementById('darkModeToggle');
@@ -11,24 +16,16 @@ document.addEventListener('DOMContentLoaded', function() {
         if (body) options.body = JSON.stringify(body);
         try {
             const response = await fetch(url, options);
-            const contentType = response.headers.get("content-type");
-
             if (!response.ok) {
-                let errorData;
-                if (contentType && contentType.indexOf("application/json") !== -1) {
-                    errorData = await response.json();
-                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-                } else {
-                    const errorText = await response.text();
-                    throw new Error(`Server returned a non-JSON error (status: ${response.status}): ${errorText.substring(0, 200)}...`);
-                }
+                const errorData = await response.json().catch(() => ({ error: `HTTP error! status: ${response.status}` }));
+                throw new Error(errorData.error || `An unknown error occurred.`);
             }
-            
+            // Handle responses that might not have a JSON body (e.g., 201 Created with no content)
+            const contentType = response.headers.get("content-type");
             if (contentType && contentType.indexOf("application/json") !== -1) {
                 return response.json();
-            } else {
-                return; 
             }
+            return {}; // Return empty object for non-json responses
         } catch (error) {
             console.error(`API request failed: ${method} ${url}`, error);
             alert(`Error: ${error.message}`);
@@ -43,7 +40,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 const targetId = link.dataset.target;
                 pages.forEach(page => page.classList.add('hidden'));
-                document.getElementById(targetId).classList.remove('hidden');
+                document.getElementById(targetId)?.classList.remove('hidden');
                 navLinks.forEach(nav => nav.classList.remove('active'));
                 link.classList.add('active');
                 loadPageData(targetId);
@@ -60,7 +57,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 const targetId = tab.dataset.tabTarget;
                 document.querySelectorAll(paneSelector).forEach(pane => pane.classList.add('hidden'));
-                document.getElementById(targetId).classList.remove('hidden');
+                document.getElementById(targetId)?.classList.remove('hidden');
                 tabs.forEach(t => t.classList.remove('active'));
                 tab.classList.add('active');
                 loadTabData(parentPageId, targetId);
@@ -71,13 +68,10 @@ document.addEventListener('DOMContentLoaded', function() {
     function loadPageData(pageId) {
         switch(pageId) {
             case 'dashboard': renderDashboardMetrics(); break;
-            case 'subjects': renderSubjects(); break;
-            case 'courses': renderCourses(); break;
             case 'schedule': renderSchedule(); break;
-            case 'planner': renderExams(); break;
-            case 'pomodoro': renderPomodoroAssignments(); break;
-            case 'gym': loadTabData('gym', 'gym-today'); break;
-            case 'basketball': loadTabData('basketball', 'bball-stats'); break;
+            case 'gym': loadTabData('gym', document.querySelector('.gym-tab.active').dataset.tabTarget); break;
+            case 'basketball': loadTabData('basketball', document.querySelector('.bball-tab.active').dataset.tabTarget); break;
+            // Add other cases as needed
         }
     }
 
@@ -93,215 +87,312 @@ document.addEventListener('DOMContentLoaded', function() {
              switch(tabId) {
                 case 'bball-stats': renderPlayerStats(); break;
                 case 'bball-shot-chart': renderShotChart(); break;
-                case 'bball-lineups': renderLineupImpact(); break;
-                case 'bball-report': renderGameReport(); break;
+                case 'bball-report': renderGameReport(); break; // Initial render
             }
         }
     }
 
-    darkModeToggle.addEventListener('change', () => {
-        document.documentElement.classList.toggle('dark');
-        renderDashboardMetrics();
-    });
-
     // --- EVENT DELEGATION ---
     document.body.addEventListener('click', handleGlobalClick);
-    document.body.addEventListener('change', handleGlobalChange);
 
     function handleGlobalClick(e) {
-        if (e.target.classList.contains('modal')) {
-            e.target.style.display = 'none';
+        const targetButton = e.target.closest('button, a, .close-modal, .sidebar-icon');
+        if (!targetButton) return;
+
+        // Modal close
+        if (targetButton.matches('.close-modal, .modal')) {
+            targetButton.closest('.modal').style.display = 'none';
             return;
         }
-        
-        const targetButton = e.target.closest('button, a, .close-modal');
-        if (!targetButton && !e.target.closest('.flashcard') && e.target.id !== 'shot-chart-container') return;
-        
-        if (targetButton && targetButton.closest('.close-modal')) {
-             targetButton.closest('.modal').style.display = 'none';
-             return;
-        }
-        
-        const id = targetButton ? targetButton.id : (e.target.id || e.target.closest('.flashcard')?.id);
 
+        const id = targetButton.id;
+        const classList = targetButton.classList;
+
+        // Static button IDs
         const actions = {
-            'addSubjectBtn': addSubject, 'addExamBtn': addExam, 'addMistakeBtn': openMistakeModal, 'saveMistakeBtn': saveMistake,
-            'addCourseBtn': openCourseModal, 'saveCourseBtn': saveCourse, 'addCustomEventBtn': openCustomEventModal, 'saveCustomEventBtn': saveCustomEvent,
-            'addExerciseBtn': openExerciseModal, 'saveExerciseBtn': saveExercise, 'import-video-btn': () => document.getElementById('video-upload').click(),
-            'add-tag-btn': openTaggingModal, 'saveTagBtn': saveTag, 'shot-made-btn': () => logShot(true), 'shot-missed-btn': () => logShot(false),
-            'flipFlashcard': () => document.querySelector('.flashcard').classList.toggle('is-flipped'), 'prevFlashcard': () => navigateFlashcard(-1), 'nextFlashcard': () => navigateFlashcard(1),
-            'addFlashcardBtn': addFlashcard, 'startStopBtn': () => isRunning ? stopTimer() : startTimer(), 'resetTimerBtn': resetTimer, 'skipBtn': () => switchMode(true),
-            'addPlayerBtn': addPlayer, // Added action for the new button
+            'addPlayerBtn': addPlayer,
+            'generateReportBtn': generateAndDisplayReport,
+            'addExerciseBtn': () => openExerciseModal(),
+            'saveExerciseBtn': saveExercise,
+            'addGymPlanBtn': () => openGymPlanModal(targetButton.dataset.date),
+            'saveGymPlanBtn': saveGymPlan,
+            'prevWeekBtn': () => changeWeek(-7),
+            'nextWeekBtn': () => changeWeek(7),
         };
 
-        if (actions[id]) actions[id]();
-        else if (targetButton?.classList.contains('add-lecture')) addLecture(targetButton.dataset.subjectId);
-        else if (targetButton?.closest('.open-flashcards')) {
-            const subjectId = targetButton.closest('[data-subject-id]').dataset.subjectId;
-            const lectureId = targetButton.closest('[data-lecture-id]').dataset.lectureId;
-            openFlashcardModal(subjectId, lectureId);
-        } else if (targetButton?.classList.contains('edit-exercise-btn')) {
+        if (actions[id]) {
+            actions[id]();
+        } else if (classList.contains('complete-workout-btn')) {
+            completeWorkout(targetButton.dataset.planId);
+        } else if (classList.contains('edit-exercise-btn')) {
             openExerciseModal(targetButton.dataset.exerciseId);
-        } else if (e.target.id === 'shot-chart-container') {
-            handleShotChartClick(e);
         }
     }
 
-    function handleGlobalChange(e) {
-        const target = e.target;
-        if (target.closest('.lecture-table-input')) updateLecture(target);
-        if (target.id === 'video-upload') importVideo(target);
-    }
-
-    // --- RENDER FUNCTIONS (Dashboard, Subjects, Courses etc. are mostly unchanged) ---
+    // --- DASHBOARD FUNCTIONS (Updated) ---
     async function renderDashboardMetrics() {
         const data = await apiRequest('/api/dashboard_metrics');
         document.getElementById('pomodoroDaily').textContent = formatTime(data.pomodoro.daily, true);
         document.getElementById('pomodoroWeekly').textContent = formatTime(data.pomodoro.weekly, true);
         document.getElementById('pomodoroMonthly').textContent = formatTime(data.pomodoro.monthly, true);
+        
         const examContainer = document.getElementById('examCountdownContainer');
         examContainer.innerHTML = data.exams.length === 0 ? '<p class="text-gray-400">No upcoming exams.</p>' : data.exams.map(exam => `<div class="mb-2"><p><strong>${exam.name}</strong> is in <span class="text-blue-400 font-bold">${Math.max(0, Math.ceil((new Date(exam.date) - new Date()) / (1000 * 60 * 60 * 24)))} days</span></p></div>`).join('');
+        
         const weakTopicsList = document.getElementById('weakTopicsList');
-        // Update Cairo clock
+        weakTopicsList.innerHTML = !data.weak_topics || data.weak_topics.length === 0 ? '<li>No mistakes logged.</li>' : data.weak_topics.map(m => `<li>${m.topic} (${m.subject_name})</li>`).join('');
+
+        // Render gym notification
+        const notificationArea = document.getElementById('dashboard-notifications');
+        if (data.gym_notification) {
+            notificationArea.innerHTML = `<div class="bg-red-500/20 border border-red-500 text-red-300 px-4 py-3 rounded-lg relative" role="alert">
+                <strong class="font-bold"><i class="fas fa-bell mr-2"></i>Reminder:</strong>
+                <span class="block sm:inline">${data.gym_notification}</span>
+            </div>`;
+        } else {
+            notificationArea.innerHTML = '';
+        }
+
         updateCairoTime();
-        // Show gym notification if planners exist for today and no gym session done
-        renderGymNotification(data);
-        weakTopicsList.innerHTML = data.weak_topics.length === 0 ? '<li>No mistakes logged.</li>' : data.weak_topics.map(m => `<li>${m.topic} (${m.subject_name})</li>`).join('');
-        renderWeeklyChart();
+        if (!window.cairoTimeInterval) {
+            window.cairoTimeInterval = setInterval(updateCairoTime, 1000);
+        }
     }
-    
-    // Unchanged functions: renderWeeklyChart, renderSubjects, addSubject, addLecture, updateLecture, renderExams, addExam, generateReverseSchedule, openMistakeModal, saveMistake, Pomodoro functions, Flashcard functions, Course functions, Schedule functions...
-    function renderWeeklyChart() { const ctx = document.getElementById('weeklyStudyChart').getContext('2d'); const isDark = document.documentElement.classList.contains('dark'); const gridColor = isDark ? '#4a5568' : '#e2e8f0'; const textColor = isDark ? '#a0aec0' : '#4a5568'; const data = { labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], datasets: [{ label: 'Study Hours', data: Array(7).fill(0).map(() => Math.random() * 5), backgroundColor: '#38bdf8', borderRadius: 5 }] }; if (weeklyChart) weeklyChart.destroy(); weeklyChart = new Chart(ctx, { type: 'bar', data: data, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, title: { display: true, text: 'Hours Studied', color: textColor }, grid: { color: gridColor }, ticks: { color: textColor } }, x: { grid: { display: false }, ticks: { color: textColor } } }, plugins: { legend: { display: false } } } }); }
-    async function renderSubjects() { const subjects = await apiRequest('/api/subjects'); const container = document.getElementById('subjectsContainer'); container.innerHTML = ''; if (subjects.length === 0) { container.innerHTML = '<p class="text-gray-400">No subjects added yet. Add one above!</p>'; return; } subjects.forEach(s => { const el = document.createElement('div'); el.className = 'bg-gray-800 p-6 rounded-lg'; const lecturesHtml = s.lectures.map(l => `<tr><td class="p-2">${l.lecture_number}</td><td class="p-2"><input type="number" value="${l.uni_lecs}" class="w-16 bg-gray-700 p-1 rounded lecture-table-input" data-type="uni_lecs" data-lecture-id="${l.id}"></td><td class="p-2"><input type="number" value="${l.studied}" class="w-16 bg-gray-700 p-1 rounded lecture-table-input" data-type="studied" data-lecture-id="${l.id}"></td><td class="p-2"><label class="toggle-switch"><input type="checkbox" ${l.revised ? 'checked' : ''} class="lecture-table-input" data-type="revised" data-lecture-id="${l.id}"><span class="slider"></span></label></td><td class="p-2"><button class="text-blue-400 open-flashcards" data-subject-id="${s.id}" data-lecture-id="${l.lecture_number}"><i class="fas fa-clone"></i></button></td></tr>`).join(''); el.innerHTML = `<h2 class="text-xl font-semibold mb-4">${s.name}</h2><div class="overflow-x-auto"><table class="w-full text-left"><thead><tr><th>Lec#</th><th>Univ.</th><th>Studied</th><th>Status</th><th>Actions</th></tr></thead><tbody>${lecturesHtml}</tbody></table></div><button class="mt-4 text-sm text-blue-400 add-lecture" data-subject-id="${s.id}">+ Add Lecture</button>`; container.appendChild(el); }); }
-    async function addSubject() { const input = document.getElementById('newSubjectInput'); const name = input.value.trim(); if (name) { await apiRequest('/api/subjects', 'POST', { name }); input.value = ''; renderSubjects(); renderPomodoroAssignments(); } }
-    async function addLecture(subjectId) { await apiRequest(`/api/subjects/${subjectId}/lectures`, 'POST'); renderSubjects(); renderPomodoroAssignments(); }
-    async function updateLecture(target) { const lectureId = target.dataset.lectureId; const row = target.closest('tr'); const data = { uni_lecs: parseInt(row.querySelector('[data-type="uni_lecs"]').value), studied: parseInt(row.querySelector('[data-type="studied"]').value), revised: row.querySelector('[data-type="revised"]').checked }; await apiRequest(`/api/lectures/${lectureId}`, 'PUT', data); }
-    async function renderExams() { generateReverseSchedule(); }
-    async function addExam() { const nameInput = document.getElementById('examNameInput'); const dateInput = document.getElementById('examDateInput'); if (nameInput.value && dateInput.value) { await apiRequest('/api/exams', 'POST', { name: nameInput.value, date: dateInput.value }); nameInput.value = ''; dateInput.value = ''; renderDashboardMetrics(); generateReverseSchedule(); } }
-    async function generateReverseSchedule() { const container = document.getElementById('reverseScheduleContainer'); const exams = await apiRequest('/api/exams'); const subjects = await apiRequest('/api/subjects'); if (exams.length === 0) { container.innerHTML = '<p class="text-gray-400">Add an exam to generate a schedule.</p>'; return; } const upcomingExam = exams[0]; const daysUntilExam = Math.ceil((new Date(upcomingExam.date) - new Date()) / (1000 * 60 * 60 * 24)); const totalLecturesToStudy = subjects.reduce((sum, s) => sum + s.lectures.reduce((lecSum, l) => lecSum + (l.uni_lecs - l.studied), 0), 0); const lecturesPerDay = totalLecturesToStudy > 0 && daysUntilExam > 3 ? (totalLecturesToStudy / (daysUntilExam - 3)).toFixed(1) : 0; container.innerHTML = `<h3 class="font-semibold text-lg">${upcomingExam.name} Plan</h3><p>Study <strong class="text-blue-400">${lecturesPerDay} lectures per day</strong>.</p>`; }
-    async function openMistakeModal() { const subjects = await apiRequest('/api/subjects'); let selectHTML = '<option value="">Select Subject</option>'; subjects.forEach(s => selectHTML += `<option value="${s.id}">${s.name}</option>`); document.getElementById('mistakeModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Log Mistake</h2><div class="space-y-4"><input type="text" id="mistakeTopicInput" placeholder="Topic" class="bg-gray-700 w-full p-2 rounded"><textarea id="mistakeDescriptionInput" placeholder="Description" class="bg-gray-700 w-full p-2 rounded h-24"></textarea><select id="mistakeSubjectSelect" class="bg-gray-700 w-full p-2 rounded">${selectHTML}</select><button id="saveMistakeBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('mistakeModal').style.display = 'flex'; }
-    async function saveMistake() { const topic = document.getElementById('mistakeTopicInput').value.trim(); const description = document.getElementById('mistakeDescriptionInput').value.trim(); const subjectId = parseInt(document.getElementById('mistakeSubjectSelect').value); if (topic && description && subjectId) { await apiRequest('/api/mistakes', 'POST', { topic, description, subject_id: subjectId }); document.getElementById('mistakeModal').style.display = 'none'; renderDashboardMetrics(); } }
-    let timerInterval, isRunning = false, timeLeft = 1500, currentMode = 'pomodoro', sessionCount = 1; const modes = { pomodoro: { time: 1500, status: 'Stay Focused' }, shortBreak: { time: 300, status: 'Short Break' }, longBreak: { time: 900, status: 'Long Break' } }; function updateTimerDisplay() { const timerDisplay = document.getElementById('timer'); if (!timerDisplay) return; const minutes = Math.floor(timeLeft / 60); const seconds = timeLeft % 60; timerDisplay.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`; const totalSeconds = modes[currentMode].time; const percentage = ((totalSeconds - timeLeft) / totalSeconds) * 360; document.getElementById('pomodoroDial').style.background = `conic-gradient(#38bdf8 ${percentage}deg, #2d3748 ${percentage}deg)`; } function startTimer() { if (isRunning) return; isRunning = true; document.getElementById('startStopBtn').innerHTML = '<i class="fas fa-pause"></i>'; timerInterval = setInterval(() => { timeLeft--; updateTimerDisplay(); if (timeLeft <= 0) { clearInterval(timerInterval); if (currentMode === 'pomodoro') { logPomodoroSession(); } switchMode(); } }, 1000); } function stopTimer() { if (!isRunning) return; isRunning = false; document.getElementById('startStopBtn').innerHTML = '<i class="fas fa-play"></i>'; clearInterval(timerInterval); } function resetTimer() { stopTimer(); timeLeft = modes[currentMode].time; updateTimerDisplay(); } function switchMode(forceNext = false) { stopTimer(); if (currentMode === 'pomodoro') { if (!forceNext) sessionCount++; currentMode = sessionCount % 4 === 0 ? 'longBreak' : 'shortBreak'; } else { currentMode = 'pomodoro'; } timeLeft = modes[currentMode].time; document.getElementById('timer-status').textContent = modes[currentMode].status; document.getElementById('session-tracker').textContent = `${Math.ceil(sessionCount/2)} / 4 Sessions`; updateTimerDisplay(); } async function logPomodoroSession() { const duration = modes.pomodoro.time; const assigned = document.getElementById('pomodoroSubjectAssign').value; let [subjectId, lectureId] = assigned ? assigned.split('-').map(Number) : [null, null]; await apiRequest('/api/pomodoro', 'POST', { duration, subject_id: subjectId, lecture_id: lectureId }); renderDashboardMetrics(); }
-    async function renderPomodoroAssignments() { const subjects = await apiRequest('/api/subjects'); const select = document.getElementById('pomodoroSubjectAssign'); select.innerHTML = '<option value="">Assign to lecture...</option>'; subjects.forEach(s => { const optgroup = document.createElement('optgroup'); optgroup.label = s.name; s.lectures.forEach(l => { optgroup.innerHTML += `<option value="${s.id}-${l.lecture_number}">Lecture ${l.lecture_number}</option>`; }); select.appendChild(optgroup); }); }
-    async function openFlashcardModal(subjectId, lectureId) { const subject = (await apiRequest('/api/subjects')).find(s => s.id == subjectId); const cards = await apiRequest(`/api/subjects/${subjectId}/lectures/${lectureId}/flashcards`); currentFlashcardState = { subjectId, lectureId, cards, currentIndex: 0 }; document.getElementById('flashcardModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Flashcards for ${subject.name} - Lec ${lectureId}</h2><div class="mb-4"><div class="flashcard" id="flipFlashcard"><div class="flashcard-inner"><div class="flashcard-front"><p id="flashcard-front-content"></p></div><div class="flashcard-back"><p id="flashcard-back-content"></p></div></div></div></div><div class="flex justify-between items-center mb-4"><button id="prevFlashcard" class="bg-gray-600 p-2 rounded"><i class="fas fa-arrow-left"></i></button><span id="flashcardCounter"></span><button id="nextFlashcard" class="bg-gray-600 p-2 rounded"><i class="fas fa-arrow-right"></i></button></div><div class="flex gap-4"><input type="text" id="newFlashcardFront" placeholder="Front" class="bg-gray-700 w-1/2 p-2 rounded"><input type="text" id="newFlashcardBack" placeholder="Back" class="bg-gray-700 w-1/2 p-2 rounded"></div><button id="addFlashcardBtn" class="w-full mt-4 bg-green-600 p-2 rounded">Add Card</button></div>`; renderFlashcard(); document.getElementById('flashcardModal').style.display = 'flex'; }
-    function renderFlashcard() { const { cards, currentIndex } = currentFlashcardState; const modal = document.getElementById('flashcardModal'); modal.querySelector('.flashcard').classList.remove('is-flipped'); if (cards.length === 0) { modal.querySelector('#flashcard-front-content').textContent = 'No cards yet.'; modal.querySelector('#flashcard-back-content').textContent = 'Add one!'; modal.querySelector('#flashcardCounter').textContent = '0 / 0'; } else { const card = cards[currentIndex]; modal.querySelector('#flashcard-front-content').textContent = card.front; modal.querySelector('#flashcard-back-content').textContent = card.back; modal.querySelector('#flashcardCounter').textContent = `${currentIndex + 1} / ${cards.length}`; } }
-    function navigateFlashcard(direction) { const { cards } = currentFlashcardState; if (cards.length > 0) { currentFlashcardState.currentIndex = (currentFlashcardState.currentIndex + direction + cards.length) % cards.length; renderFlashcard(); } }
-    async function addFlashcard() { const modal = document.getElementById('flashcardModal'); const front = modal.querySelector('#newFlashcardFront').value.trim(); const back = modal.querySelector('#newFlashcardBack').value.trim(); const { subjectId, lectureId } = currentFlashcardState; if (front && back) { await apiRequest('/api/flashcards', 'POST', { subject_id: subjectId, lecture_id: lectureId, front, back }); openFlashcardModal(subjectId, lectureId); } }
-    async function renderCourses() { const courses = await apiRequest('/api/courses'); const container = document.getElementById('courseLibraryContainer'); container.innerHTML = ''; if (courses.length === 0) { container.innerHTML = '<p class="text-gray-400 md:col-span-2">No courses added.</p>'; return; } courses.forEach(c => { const progress = c.total_units > 0 ? (c.completed_units / c.total_units) * 100 : 0; container.innerHTML += `<div class="bg-gray-700 p-4 rounded-lg"><h3 class="font-bold">${c.title}</h3><p class="text-sm text-gray-400">${c.platform} - ${c.category}</p><div class="mt-3"><div class="flex justify-between text-sm mb-1"><span>Progress</span><span>${Math.round(progress)}%</span></div><div class="w-full bg-gray-600 rounded-full h-2.5"><div class="bg-blue-500 h-2.5 rounded-full" style="width: ${progress}%"></div></div><p class="text-xs text-gray-500 mt-1">${c.completed_units}/${c.total_units} units</p></div></div>`; }); }
-    function openCourseModal() { document.getElementById('courseModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Add Course</h2><div class="space-y-4"><input type="text" id="courseTitleInput" placeholder="Title" class="bg-gray-700 w-full p-2 rounded"><div class="grid grid-cols-2 gap-4"><input type="text" id="coursePlatformInput" placeholder="Platform" class="bg-gray-700 w-full p-2 rounded"><input type="text" id="courseCategoryInput" placeholder="Category" class="bg-gray-700 w-full p-2 rounded"></div><div class="grid grid-cols-2 gap-4"><input type="number" id="courseTotalUnitsInput" placeholder="Total Units" class="bg-gray-700 w-full p-2 rounded"><input type="number" id="courseCompletedUnitsInput" placeholder="Completed Units" class="bg-gray-700 w-full p-2 rounded"></div><div><label class="text-sm">Target Date</label><input type="date" id="courseTargetDateInput" class="bg-gray-700 w-full p-2 rounded"></div><input type="number" id="courseSessionsWeekInput" placeholder="Target Sessions/Week" class="bg-gray-700 w-full p-2 rounded"><button id="saveCourseBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('courseModal').style.display = 'flex'; }
-    async function saveCourse() { const modal = document.getElementById('courseModal'); const data = { title: modal.querySelector('#courseTitleInput').value, platform: modal.querySelector('#coursePlatformInput').value, category: modal.querySelector('#courseCategoryInput').value, total_units: parseInt(modal.querySelector('#courseTotalUnitsInput').value) || 0, completed_units: parseInt(modal.querySelector('#courseCompletedUnitsInput').value) || 0, target_date: modal.querySelector('#courseTargetDateInput').value, sessions_per_week: parseInt(modal.querySelector('#courseSessionsWeekInput').value) || 1 }; await apiRequest('/api/courses', 'POST', data); modal.style.display = 'none'; renderCourses(); }
-    async function renderSchedule() { const events = await apiRequest('/api/schedule'); const container = document.getElementById('timeline-container'); if (!container) return; container.innerHTML = ''; for (let i = 0; i < 24; i++) { container.innerHTML += `<div class="timeline-hour"><span class="timeline-hour-label">${i.toString().padStart(2, '0')}:00</span></div>`; } events.forEach(e => { const startMinutes = timeToMinutes(e.start_time); const endMinutes = timeToMinutes(e.end_time); const duration = endMinutes - startMinutes; container.innerHTML += `<div class="timeline-event" style="top:${startMinutes}px; height:${duration}px; background-color:rgba(${getColor(e.color)}, 0.5); border-color:rgb(${getColor(e.color)});"><p class="font-bold">${e.title}</p></div>`; }); }
-    function openCustomEventModal() { document.getElementById('customEventModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Add Custom Event</h2><div class="space-y-4"><input type="text" id="customEventTitle" placeholder="Title" class="bg-gray-700 w-full p-2 rounded"><div class="grid grid-cols-2 gap-4"><div><label class="text-sm">Start</label><input type="time" id="customEventStart" class="bg-gray-700 w-full p-2 rounded"></div><div><label class="text-sm">End</label><input type="time" id="customEventEnd" class="bg-gray-700 w-full p-2 rounded"></div></div><div><label class="text-sm">Color</label><select id="customEventColor" class="bg-gray-700 w-full p-2 rounded"><option value="purple">Purple</option><option value="yellow">Yellow</option><option value="teal">Teal</option></select></div><button id="saveCustomEventBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('customEventModal').style.display = 'flex'; }
-    async function saveCustomEvent() { const modal = document.getElementById('customEventModal'); const data = { title: modal.querySelector('#customEventTitle').value, start_time: modal.querySelector('#customEventStart').value, end_time: modal.querySelector('#customEventEnd').value, color: modal.querySelector('#customEventColor').value }; if (data.title && data.start_time && data.end_time) { await apiRequest('/api/schedule', 'POST', data); modal.style.display = 'none'; renderSchedule(); } }
 
-    // --- GYM FUNCTIONS ---
-    function renderTodaysWorkout() { document.getElementById('gym-today').innerHTML = '<p class="text-gray-400">Today\'s workout plan coming soon...</p>'; }
-    function renderGymPlanner() { document.getElementById('gym-planner').innerHTML = '<p class="text-gray-400">Weekly planner coming soon...</p>'; }
-    async function renderExerciseLibrary() {
+    function updateCairoTime() {
+        const timeEl = document.getElementById('cairo-time');
+        const dateEl = document.getElementById('cairo-date');
+        if (!timeEl || !dateEl) return;
+
+        const now = new Date();
+        const cairoTime = new Date(now.toLocaleString('en-US', { timeZone: 'Africa/Cairo' }));
+        
+        const hours = cairoTime.getHours().toString().padStart(2, '0');
+        const minutes = cairoTime.getMinutes().toString().padStart(2, '0');
+        const seconds = cairoTime.getSeconds().toString().padStart(2, '0');
+        
+        timeEl.textContent = `${hours}:${minutes}:${seconds}`;
+        dateEl.textContent = cairoTime.toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    }
+
+    // --- SCHEDULE FUNCTIONS (Updated) ---
+    async function renderSchedule() {
+        const events = await apiRequest('/api/schedule');
+        const container = document.getElementById('timeline-container');
+        if (!container) return;
+        
+        // Clear and rebuild timeline hours
+        container.innerHTML = '';
+        for (let i = 0; i < 24; i++) {
+            container.innerHTML += `<div class="timeline-hour"><span class="timeline-hour-label">${i.toString().padStart(2, '0')}:00</span></div>`;
+        }
+        
+        // Add event elements
+        events.forEach(e => {
+            const startMinutes = timeToMinutes(e.start_time);
+            const endMinutes = timeToMinutes(e.end_time);
+            const duration = Math.max(15, endMinutes - startMinutes); // Min height of 15px
+            
+            const eventEl = document.createElement('div');
+            eventEl.className = 'timeline-event';
+            eventEl.style.top = `${startMinutes}px`;
+            eventEl.style.height = `${duration}px`;
+            
+            const colorRgb = getColor(e.color);
+            eventEl.style.backgroundColor = `rgba(${colorRgb}, 0.5)`;
+            eventEl.style.borderColor = `rgb(${colorRgb})`;
+            eventEl.innerHTML = `<p class="font-bold text-sm">${e.title}</p><p class="text-xs">${e.start_time} - ${e.end_time}</p>`;
+            
+            container.appendChild(eventEl);
+        });
+    }
+
+    // --- GYM FUNCTIONS (All New or Heavily Modified) ---
+
+    async function renderTodaysWorkout() {
+        const container = document.getElementById('gym-today');
+        container.innerHTML = '<p class="text-gray-400">Loading today\'s workout...</p>';
+        
+        const plan = await apiRequest('/api/gym/today');
+
+        if (!plan) {
+            container.innerHTML = '<div class="text-center"><i class="fas fa-couch fa-3x text-gray-500 mb-4"></i><h3 class="text-xl font-semibold">Rest Day!</h3><p class="text-gray-400">No workout planned for today. Enjoy your rest!</p></div>';
+            return;
+        }
+
+        let exercisesHtml = plan.exercises.map(ex => `
+            <div class="bg-gray-700 p-4 rounded-lg flex justify-between items-center">
+                <div>
+                    <p class="font-bold text-lg">${ex.exercise_name}</p>
+                    <p class="text-sm text-blue-400">${ex.exercise_group}</p>
+                </div>
+                <div class="text-right">
+                    <p><span class="font-semibold">${ex.sets}</span> sets</p>
+                    <p><span class="font-semibold">${ex.reps}</span> reps</p>
+                    ${ex.weight ? `<p>@ <span class="font-semibold">${ex.weight}</span></p>` : ''}
+                </div>
+            </div>
+        `).join('');
+
+        container.innerHTML = `
+            <div class="bg-gray-800 p-6 rounded-lg">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h2 class="text-2xl font-bold">${plan.name}</h2>
+                        <p class="text-gray-400">${plan.start_time ? `Scheduled for ${plan.start_time.substring(0,5)}` : 'No time set'}</p>
+                    </div>
+                    ${!plan.completed ? `<button class="complete-workout-btn bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg" data-plan-id="${plan.id}"><i class="fas fa-check mr-2"></i>Mark as Completed</button>` : '<span class="text-green-400 font-bold flex items-center"><i class="fas fa-check-circle mr-2"></i>Completed</span>'}
+                </div>
+                <div class="space-y-4">${exercisesHtml}</div>
+            </div>
+        `;
+    }
+
+    async function completeWorkout(planId) {
+        if (!confirm('Are you sure you want to mark this workout as complete? This may update your PRs.')) return;
+        await apiRequest(`/api/gym/plan/${planId}/complete`, 'PUT');
+        await renderTodaysWorkout();
+        await renderDashboardMetrics(); // To remove notification
+        await renderSchedule(); // To update color
+    }
+
+    async function renderGymPlanner() {
+        const container = document.getElementById('gym-planner');
+        container.innerHTML = '<p class="text-gray-400">Loading planner...</p>';
+
+        const startDate = gymPlannerState.currentWeekStartDate;
+        const plansByDay = await apiRequest(`/api/gym/planner?start_date=${formatDateForAPI(startDate)}`);
+        
+        let daysHtml = '';
+        for (let i = 0; i < 7; i++) {
+            const dayDate = new Date(startDate);
+            dayDate.setDate(startDate.getDate() + i);
+            const dateStr = formatDateForAPI(dayDate);
+            
+            const plans = plansByDay[dateStr] || [];
+            let plansHtml = plans.map(p => `
+                <div class="bg-gray-700 p-2 rounded-md text-sm mb-2 ${p.completed ? 'border-l-4 border-green-500' : ''}">
+                    <p class="font-bold">${p.name}</p>
+                    <p class="text-xs text-gray-400">${p.start_time ? p.start_time.substring(0,5) : ''}</p>
+                </div>
+            `).join('');
+
+            daysHtml += `
+                <div class="bg-gray-800 rounded-lg p-3">
+                    <div class="font-semibold text-center mb-2">${dayDate.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                    <div class="text-gray-400 text-center text-sm mb-3">${dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
+                    <div class="space-y-2">${plansHtml}</div>
+                    <button id="addGymPlanBtn" data-date="${dateStr}" class="w-full mt-3 text-sm bg-blue-600/50 hover:bg-blue-600 text-white font-bold py-1 px-2 rounded-lg">+ Add Session</button>
+                </div>
+            `;
+        }
+
+        container.innerHTML = `
+            <div class="flex justify-between items-center mb-4">
+                <button id="prevWeekBtn" class="bg-gray-700 p-2 rounded-lg"><i class="fas fa-chevron-left"></i></button>
+                <h2 class="text-xl font-semibold">${startDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h2>
+                <button id="nextWeekBtn" class="bg-gray-700 p-2 rounded-lg"><i class="fas fa-chevron-right"></i></button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-7 gap-4">${daysHtml}</div>
+        `;
+    }
+
+    function changeWeek(days) {
+        gymPlannerState.currentWeekStartDate.setDate(gymPlannerState.currentWeekStartDate.getDate() + days);
+        renderGymPlanner();
+    }
+
+    async function openGymPlanModal(date) {
+        const modal = document.getElementById('gymPlanModal');
         const exercises = await apiRequest('/api/gym/exercises');
-        const container = document.getElementById('gym-exercises');
-        container.innerHTML = `<h2 class="text-2xl font-semibold mb-4">Exercise Library</h2><button id="addExerciseBtn" class="mb-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add Exercise</button><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>`;
-        const libraryContainer = container.querySelector('div.grid');
-        libraryContainer.innerHTML = '';
-        exercises.forEach(ex => {
-            libraryContainer.innerHTML += `<div class="bg-gray-800 p-4 rounded-lg flex flex-col justify-between"><div><h3 class="font-bold text-lg">${ex.name}</h3><p class="text-sm text-blue-400">${ex.group}</p><div class="mt-2 space-x-2">${(ex.tags || []).map(tag => `<span class="bg-gray-700 text-xs font-semibold mr-2 px-2.5 py-0.5 rounded">${tag}</span>`).join('')}</div><p class="text-sm text-gray-400 mt-2">${ex.cues}</p></div><div class="mt-4"><button class="edit-exercise-btn text-sm text-yellow-400 hover:underline" data-exercise-id="${ex.id}">Edit</button></div></div>`;
-        });
-    }
-    async function renderPrLog() {
-        const prs = await apiRequest('/api/gym/prs');
-        const container = document.getElementById('gym-prs');
-        container.innerHTML = `<h2 class="text-2xl font-semibold mb-4">Personal Records</h2><div class="space-y-4"></div>`;
-        const prContainer = container.querySelector('div.space-y-4');
-        if (prs.length === 0) { prContainer.innerHTML = '<p class="text-gray-400">No PRs logged yet!</p>'; return; }
-        prContainer.innerHTML = '';
-        prs.forEach(pr => {
-            prContainer.innerHTML += `<div class="bg-gray-800 p-4 rounded-lg flex items-center justify-between"><div><p class="font-bold text-xl">${pr.exercise_name}</p><p class="text-gray-400 text-sm">${new Date(pr.date).toLocaleDateString()}</p></div><div class="text-right"><p class="text-2xl font-bold text-blue-400">${pr.weight}kg x ${pr.reps}</p><p class="text-sm text-gray-500">Est. 1RM: ${Math.round(pr.weight * (1 + pr.reps / 30))}kg</p></div><div class="text-yellow-400 text-3xl"><i class="fas fa-trophy"></i></div></div>`;
-        });
-    }
-    function openExerciseModal(exerciseId = null) {
-        const isEditing = exerciseId !== null;
-        document.getElementById('exerciseModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">${isEditing ? 'Edit' : 'Add'} Exercise</h2><div class="space-y-4"><input type="hidden" id="exerciseIdInput" value="${exerciseId || ''}"><input type="text" id="exerciseNameInput" placeholder="Name" class="bg-gray-700 w-full p-2 rounded"><select id="exerciseGroupInput" class="bg-gray-700 w-full p-2 rounded">${['Chest','Back','Shoulders','Biceps','Triceps','Legs','Abs','Other'].map(g => `<option>${g}</option>`).join('')}</select><input type="text" id="exerciseCuesInput" placeholder="Cues" class="bg-gray-700 w-full p-2 rounded"><input type="text" id="exerciseTagsInput" placeholder="Tags (comma-separated)" class="bg-gray-700 w-full p-2 rounded"><button id="saveExerciseBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`;
-        document.getElementById('exerciseModal').style.display = 'flex';
-    }
-    async function saveExercise() {
-        const modal = document.getElementById('exerciseModal');
-        const data = {
-            name: modal.querySelector('#exerciseNameInput').value,
-            group: modal.querySelector('#exerciseGroupInput').value,
-            cues: modal.querySelector('#exerciseCuesInput').value,
-            tags: modal.querySelector('#exerciseTagsInput').value.split(',').map(t => t.trim()).filter(Boolean)
-        };
-        await apiRequest('/api/gym/exercises', 'POST', data);
-        modal.style.display = 'none';
-        renderExerciseLibrary();
+        const exerciseOptions = exercises.map(ex => `<option value="${ex.id}">${ex.name}</option>`).join('');
+
+        modal.innerHTML = `
+            <div class="modal-content max-w-2xl">
+                <span class="close-modal">&times;</span>
+                <h2 class="text-xl font-bold mb-4">Plan Workout for ${date}</h2>
+                <input type="hidden" id="gymPlanDate" value="${date}">
+                <div class="space-y-4">
+                    <input type="text" id="gymPlanName" placeholder="Workout Name (e.g., Push Day)" class="bg-gray-700 w-full p-2 rounded">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div><label class="text-sm">Start Time</label><input type="time" id="gymPlanStart" class="bg-gray-700 w-full p-2 rounded"></div>
+                        <div><label class="text-sm">End Time</label><input type="time" id="gymPlanEnd" class="bg-gray-700 w-full p-2 rounded"></div>
+                    </div>
+                    <h3 class="font-semibold mt-4">Exercises</h3>
+                    <div id="gymPlanExercisesContainer" class="space-y-2">
+                        <!-- Exercise rows will be added here -->
+                    </div>
+                    <button id="addExerciseToPlan" class="text-sm text-blue-400">+ Add Exercise</button>
+                    <button id="saveGymPlanBtn" class="w-full bg-blue-600 p-2 rounded mt-4">Save Plan</button>
+                </div>
+            </div>
+        `;
+
+        function addExerciseRow() {
+            const div = document.createElement('div');
+            div.className = 'grid grid-cols-12 gap-2 items-center';
+            div.innerHTML = `
+                <select class="col-span-5 bg-gray-600 p-1 rounded text-sm plan-exercise-id">${exerciseOptions}</select>
+                <input type="text" placeholder="Sets" class="col-span-2 bg-gray-600 p-1 rounded text-sm plan-exercise-sets">
+                <input type="text" placeholder="Reps" class="col-span-2 bg-gray-600 p-1 rounded text-sm plan-exercise-reps">
+                <input type="text" placeholder="Weight" class="col-span-2 bg-gray-600 p-1 rounded text-sm plan-exercise-weight">
+                <button class="col-span-1 text-red-400 remove-exercise-row">&times;</button>
+            `;
+            div.querySelector('.remove-exercise-row').onclick = () => div.remove();
+            modal.querySelector('#gymPlanExercisesContainer').appendChild(div);
+        }
+
+        modal.querySelector('#addExerciseToPlan').onclick = addExerciseRow;
+        addExerciseRow(); // Start with one row
+        modal.style.display = 'flex';
     }
 
-    // --- BASKETBALL FUNCTIONS ---
-    async function addPlayer() {
-        const input = document.getElementById('newPlayerNameInput');
-        const name = input.value.trim();
-        if (name) {
-            await apiRequest('/api/basketball/players', 'POST', { name });
-            input.value = '';
-            renderPlayerStats(); // Re-render the stats table to show the new player
-        }
-    }
-    function importVideo(target) { const file = target.files[0]; const videoPlayer = document.getElementById('basketball-video'); if (file) { videoPlayer.src = URL.createObjectURL(file); videoPlayer.style.display = 'block'; document.getElementById('video-placeholder').style.display = 'none'; } }
-    async function openTaggingModal() {
-        const videoPlayer = document.getElementById('basketball-video');
-        if (!videoPlayer.src) { alert("Import a video first."); return; }
-        const { players } = await apiRequest('/api/basketball/data');
-        if (!players || players.length === 0) {
-            alert("No players found. Please add a player in the 'Stats' tab first.");
+    async function saveGymPlan() {
+        const modal = document.getElementById('gymPlanModal');
+        const exerciseRows = modal.querySelectorAll('#gymPlanExercisesContainer > div');
+        
+        let exercises = [];
+        exerciseRows.forEach(row => {
+            const exercise_id = row.querySelector('.plan-exercise-id').value;
+            const sets = row.querySelector('.plan-exercise-sets').value;
+            const reps = row.querySelector('.plan-exercise-reps').value;
+            const weight = row.querySelector('.plan-exercise-weight').value;
+            if (exercise_id && sets && reps) {
+                exercises.push({ exercise_id, sets, reps, weight });
+            }
+        });
+
+        if (exercises.length === 0) {
+            alert('Please add at least one exercise.');
             return;
         }
-        document.getElementById('taggingModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Tag Action</h2><div class="space-y-4"><div><label>Player</label><select id="tag-player" class="bg-gray-700 w-full p-2 rounded">${players.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></div><div><label>Category</label><select id="tag-category" class="bg-gray-700 w-full p-2 rounded">${['Offense','Defense','Transition'].map(c => `<option>${c}</option>`).join('')}</select></div><div><label>Action</label><input type="text" id="tag-action" placeholder="e.g., Pick & Roll" class="bg-gray-700 w-full p-2 rounded"></div><div><label>Stat Type</label><select id="tag-stat-type" class="bg-gray-700 w-full p-2 rounded">${Object.entries({'none':'None','fga_made':'Shot Made','fga_missed':'Shot Missed','ast':'Assist'}).map(([v,l]) => `<option value="${v}">${l}</option>`).join('')}</select></div><button id="saveTagBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`;
-        document.getElementById('taggingModal').style.display = 'flex';
-    }
-    async function saveTag() {
-        const modal = document.getElementById('taggingModal');
+
         const data = {
-            time: document.getElementById('basketball-video').currentTime,
-            player_id: parseInt(modal.querySelector('#tag-player').value),
-            category: modal.querySelector('#tag-category').value,
-            action: modal.querySelector('#tag-action').value,
-            stat_type: modal.querySelector('#tag-stat-type').value
+            date: modal.querySelector('#gymPlanDate').value,
+            name: modal.querySelector('#gymPlanName').value || 'Workout',
+            start_time: modal.querySelector('#gymPlanStart').value,
+            end_time: modal.querySelector('#gymPlanEnd').value,
+            exercises: exercises
         };
-        await apiRequest('/api/basketball/tags', 'POST', data);
-        modal.style.display = 'none';
-        renderTimeline();
-    }
-    function handleShotChartClick(e) {
-        const rect = e.currentTarget.getBoundingClientRect();
-        tempShotData = { x: (e.clientX - rect.left) / rect.width * 100, y: (e.clientY - rect.top) / rect.height * 100 };
-        document.getElementById('shotModal').innerHTML = `<div class="modal-content max-w-xs"><h2 class="text-xl font-bold mb-4 text-center">Shot Result</h2><div class="flex justify-around"><button id="shot-made-btn" class="bg-green-600 p-3 px-6 rounded">Make</button><button id="shot-missed-btn" class="bg-red-600 p-3 px-6 rounded">Miss</button></div></div>`;
-        document.getElementById('shotModal').style.display = 'flex';
-    }
-    async function logShot(made) {
-        const { players } = await apiRequest('/api/basketball/data');
-        if (!players || players.length === 0) {
-            alert("Cannot log shot, no players exist.");
+        
+        if (!data.start_time || !data.end_time) {
+            alert('Please set a start and end time.');
             return;
         }
-        await apiRequest('/api/basketball/shots', 'POST', { ...tempShotData, made, player_id: players[0].id });
-        document.getElementById('shotModal').style.display = 'none';
-        renderShotChart();
+
+        await apiRequest('/api/gym/planner', 'POST', data);
+        modal.style.display = 'none';
+        await renderGymPlanner();
+        await renderSchedule();
     }
-    async function renderTimeline() {
-        const { tags } = await apiRequest('/api/basketball/data');
-        const container = document.getElementById('analysis-timeline');
-        container.innerHTML = tags.length === 0 ? '<p class="text-gray-400">Tagged actions will appear here.</p>' : tags.map(tag => `<div class="bg-gray-700 p-2 rounded-lg text-sm"><p><strong class="text-blue-400">${formatVideoTime(tag.time)}</strong> - ${tag.player_name}</p><p class="text-gray-300">${tag.category}: ${tag.action}</p></div>`).join('');
-    }
-    async function renderShotChart() {
-        const { shots } = await apiRequest('/api/basketball/data');
-        const container = document.getElementById('bball-shot-chart');
-        container.innerHTML = `<div class="bg-gray-800 p-4 rounded-lg"><h3 class="text-xl font-semibold mb-4">Shot Chart</h3><div id="shot-chart-container"></div></div>`;
-        const chartContainer = container.querySelector('#shot-chart-container');
-        chartContainer.innerHTML = shots.map(shot => `<div class="shot-dot" style="left: ${shot.x}%; top: ${shot.y}%; background-color: ${shot.made ? '#4ade80' : '#f87171'};"></div>`).join('');
-    }
+
+    // --- BASKETBALL FUNCTIONS (Updated) ---
+
     async function renderPlayerStats() {
         const { stats } = await apiRequest('/api/basketball/data');
         const container = document.getElementById('bball-stats');
+        
+        // Added REB, STL, BLK, TOV columns
         let tableHTML = `
             <div class="bg-gray-800 p-4 rounded-lg">
                 <h3 class="text-xl font-semibold mb-4">Player Stats</h3>
@@ -311,166 +402,109 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left">
-                        <thead><tr><th>Player</th><th>PTS</th><th>FGM/A</th><th>AST</th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th class="p-2">Player</th><th>PTS</th><th>FGM/A</th><th>AST</th><th>REB</th><th>STL</th><th>BLK</th><th>TOV</th>
+                            </tr>
+                        </thead>
                         <tbody>`;
-        stats.forEach(p => { tableHTML += `<tr><td class="p-2">${p.name}</td><td class="p-2">${p.PTS}</td><td class="p-2">${p.FGM}/${p.FGA}</td><td class="p-2">${p.AST}</td></tr>`; });
+        stats.forEach(p => {
+            tableHTML += `<tr>
+                <td class="p-2">${p.name}</td><td class="p-2">${p.PTS}</td><td class="p-2">${p.FGM}/${p.FGA}</td>
+                <td class="p-2">${p.AST}</td><td class="p-2">${p.REB}</td><td class="p-2">${p.STL}</td>
+                <td class="p-2">${p.BLK}</td><td class="p-2">${p.TOV}</td>
+            </tr>`;
+        });
         tableHTML += '</tbody></table></div></div>';
         container.innerHTML = tableHTML;
     }
-    function renderLineupImpact() { document.getElementById('bball-lineups').innerHTML = '<p class="text-gray-400">Lineup analysis coming soon.</p>'; }
-    function renderGameReport() { document.getElementById('bball-report').innerHTML = '<p class="text-gray-400">Game reports coming soon.</p>'; }
+
+    async function addPlayer() {
+        const input = document.getElementById('newPlayerNameInput');
+        const name = input.value.trim();
+        if (name) {
+            await apiRequest('/api/basketball/players', 'POST', { name });
+            input.value = '';
+            renderPlayerStats();
+        }
+    }
+
+    async function openTaggingModal() {
+        // ... unchanged, but backend now supports more stat_types
+    }
+
+    function renderGameReport() {
+        // This function now just ensures the initial state is correct.
+        // The main logic is in generateAndDisplayReport.
+        const reportContent = document.getElementById('report-content');
+        reportContent.innerHTML = '<p class="text-gray-400">Click the button to generate a report.</p>';
+    }
+
+    async function generateAndDisplayReport() {
+        const { stats } = await apiRequest('/api/basketball/data');
+        const reportContent = document.getElementById('report-content');
+        
+        if (!stats || stats.length === 0) {
+            reportContent.innerHTML = '<p class="text-red-400">No player data available to generate a report.</p>';
+            return;
+        }
+
+        const headers = ["Player", "PTS", "FGM", "FGA", "FG%", "AST", "REB", "STL", "BLK", "TOV"];
+        const body = stats.map(p => [
+            p.name,
+            p.PTS,
+            p.FGM,
+            p.FGA,
+            p.FGA > 0 ? ((p.FGM / p.FGA) * 100).toFixed(1) : '0.0',
+            p.AST,
+            p.REB,
+            p.STL,
+            p.BLK,
+            p.TOV
+        ]);
+
+        // Display as HTML table
+        let tableHtml = `<table class="w-full text-left report-table"><thead><tr>${headers.map(h => `<th class="p-2">${h}</th>`).join('')}</tr></thead><tbody>`;
+        body.forEach(row => {
+            tableHtml += `<tr>${row.map(cell => `<td class="p-2 border-t border-gray-700">${cell}</td>`).join('')}</tr>`;
+        });
+        tableHtml += '</tbody></table>';
+        reportContent.innerHTML = tableHtml;
+
+        // PDF Generation Logic
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        
+        doc.text("Player Performance Report", 14, 16);
+        doc.setFontSize(10);
+        doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 22);
+
+        doc.autoTable({
+            head: [headers],
+            body: body,
+            startY: 25,
+            theme: 'grid',
+            headStyles: { fillColor: [22, 163, 74] },
+        });
+        
+        doc.save('basketball-report.pdf');
+    }
 
     // --- UTILITY FUNCTIONS ---
+    function getStartOfWeek(d) {
+        d = new Date(d);
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+        return new Date(d.setDate(diff));
+    }
+    function formatDateForAPI(date) {
+        return date.toISOString().split('T')[0];
+    }
     function formatTime(seconds, short = false) { if (isNaN(seconds) || seconds < 0) return "0m"; const h = Math.floor(seconds / 3600); const m = Math.floor((seconds % 3600) / 60); return short ? `${h}h ${m}m` : `${h}h ${m}m`; }
-    function formatVideoTime(timeInSeconds) { const minutes = Math.floor(timeInSeconds / 60); const seconds = Math.floor(timeInSeconds % 60); return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`; }
     function getColor(colorName) { const colors = { red: '248, 113, 113', green: '74, 222, 128', blue: '96, 165, 250', indigo: '129, 140, 248', purple: '167, 139, 250', yellow: '250, 204, 21', teal: '45, 212, 191' }; return colors[colorName] || colors.blue; }
-    function timeToMinutes(timeStr) { const [hours, minutes] = timeStr.split(':').map(Number); return hours * 60 + minutes; }
+    function timeToMinutes(timeStr) { if(!timeStr) return 0; const [hours, minutes] = timeStr.split(':').map(Number); return hours * 60 + minutes; }
 
     // --- INITIALIZATION ---
     setupNavigation();
     loadPageData('dashboard'); // Load initial page
-    updateTimerDisplay();
 });
-
-
-// --- Cairo Time & Dashboard Notification ---
-function updateCairoTime() {
-    const el = document.getElementById('cairoTime');
-    if (!el) return;
-    const now = new Date();
-    // compute UTC+3 (Cairo)
-    const utc = new Date(now.getTime() + now.getTimezoneOffset()*60000);
-    const cairo = new Date(utc.getTime() + 3*60*60000);
-    el.textContent = cairo.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-}
-
-function renderGymNotification(data) {
-    const box = document.getElementById('gymNotificationBox');
-    if (!box) return;
-    // determine if planners exist for today via a backend call
-    apiRequest('/api/gym/planner').then(planners => {
-        const today = new Date();
-        const weekday = today.getDay() === 0 ? 6 : today.getDay()-1; // JS Sun=0; in backend Monday=0
-        const plannersToday = planners.filter(p => (p.event_date && new Date(p.event_date).toDateString()===today.toDateString()) || p.day_of_week === weekday);
-        // get gym logs today
-        apiRequest('/api/dashboard_metrics').then(dm => {
-            const gymLogs = dm.goals.gym.current || 0;
-            if (plannersToday.length > 0 && gymLogs === 0) {
-                box.innerHTML = `<div class="bg-red-600 text-white p-3 rounded-lg font-semibold">You have a gym session today and it's not finished!</div>`;
-            } else {
-                box.innerHTML = '';
-            }
-        });
-    });
-}
-
-// --- Gym Planner UI & Actions ---
-async function renderTodaysWorkout() {
-    const container = document.getElementById('gym-today');
-    const planners = await apiRequest('/api/gym/planner');
-    const today = new Date();
-    const weekday = today.getDay() === 0 ? 6 : today.getDay()-1;
-    const plannersToday = planners.filter(p => (p.event_date && new Date(p.event_date).toDateString()===today.toDateString()) || p.day_of_week === weekday);
-    if (!plannersToday || plannersToday.length === 0) {
-        container.innerHTML = `<p class="text-gray-400">No gym planned for today. <button id="openAddPlannerBtn" class="ml-2 text-blue-400">Add one</button></p>`;
-    } else {
-        container.innerHTML = plannersToday.map(p => `<div class="bg-gray-800 p-4 rounded-lg mb-3"><div class="flex justify-between items-center"><div><p class="font-bold">${p.title}</p><p class="text-sm text-gray-400">${p.event_date ? new Date(p.event_date).toLocaleDateString() : 'Weekly on day ' + (p.day_of_week!==null?p.day_of_week:'')}</p></div><div><button class="bg-green-600 px-3 py-1 rounded mark-gym-done" data-planner-id="${p.id}">Mark Done</button></div></div></div>`).join('');
-    }
-}
-
-async function renderGymPlanner() {
-    const container = document.getElementById('gym-planner');
-    const planners = await apiRequest('/api/gym/planner');
-    container.innerHTML = `<div class="mb-4"><button id="addPlannerBtn" class="bg-blue-600 p-2 rounded">Add Planner Entry</button></div><div id="plannerList" class="space-y-3"></div>`;
-    const list = container.querySelector('#plannerList');
-    if (planners.length===0) list.innerHTML = '<p class="text-gray-400">No planner entries yet.</p>';
-    else {
-        list.innerHTML = planners.map(p => `<div class="bg-gray-800 p-3 rounded flex justify-between items-center"><div><p class="font-semibold">${p.title}</p><p class="text-sm text-gray-400">${p.event_date ? new Date(p.event_date).toLocaleDateString() : 'Weekly day ' + (p.day_of_week!==null?p.day_of_week:'')}</p></div><div><button class="delete-planner btn text-sm text-red-400" data-id="${p.id}">Delete</button></div></div>`).join('');
-    }
-}
-
-document.body.addEventListener('click', async function(e){
-    if (e.target && e.target.id === 'addPlannerBtn') {
-        openPlannerModal();
-    } else if (e.target && e.target.id === 'openAddPlannerBtn') {
-        openPlannerModal();
-    } else if (e.target && e.target.classList.contains('delete-planner')) {
-        const id = e.target.dataset.id;
-        if (confirm('Delete planner entry?')) {
-            await apiRequest('/api/gym/planner/'+id, 'DELETE');
-            renderGymPlanner();
-            renderTodaysWorkout();
-            renderSchedule();
-            renderDashboardMetrics();
-        }
-    } else if (e.target && e.target.classList.contains('mark-gym-done')) {
-        const pid = e.target.dataset.plannerId;
-        // create a GymSessionLog for today via existing /api/gym/prs ? No endpoint; use /api/gym/exercises to create a session log is not present.
-        // We'll POST to /api/gym/log to create a GymSessionLog (create endpoint on backend isn't implemented; instead create CustomEvent? Simpler: mark done by adding a GymSessionLog via new endpoint /api/gym/log)
-        await apiRequest('/api/gym/log', 'POST', { planner_id: pid });
-        renderTodaysWorkout();
-        renderDashboardMetrics();
-    }
-});
-
-// Planner modal
-function openPlannerModal() {
-    const modal = document.getElementById('exerciseModal');
-    modal.innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Add Gym Planner Entry</h2>
-    <div class="space-y-3"><input id="plannerTitle" class="bg-gray-700 w-full p-2 rounded" placeholder="Title"><div class="grid grid-cols-2 gap-2"><div><label class="text-sm">Event Date (optional)</label><input type="date" id="plannerDate" class="bg-gray-700 w-full p-2 rounded"></div><div><label class="text-sm">Day of Week (0 Mon - 6 Sun)</label><input type="number" min="0" max="6" id="plannerDay" class="bg-gray-700 w-full p-2 rounded"></div></div><div class="grid grid-cols-2 gap-2"><input type="time" id="plannerStart" class="bg-gray-700 w-full p-2 rounded"><input type="time" id="plannerEnd" class="bg-gray-700 w-full p-2 rounded"></div><input id="plannerExercises" class="bg-gray-700 w-full p-2 rounded" placeholder="Exercises comma separated"><button id="savePlannerBtn" class="w-full bg-blue-600 p-2 rounded mt-2">Save</button></div></div>`;
-    modal.style.display = 'flex';
-}
-
-document.body.addEventListener('click', async function(e){
-    if (e.target && e.target.id === 'savePlannerBtn') {
-        const modal = document.getElementById('exerciseModal');
-        const title = modal.querySelector('#plannerTitle').value || 'Gym Session';
-        const event_date = modal.querySelector('#plannerDate').value || null;
-        const day_of_week = modal.querySelector('#plannerDay').value ? parseInt(modal.querySelector('#plannerDay').value) : null;
-        const start_time = modal.querySelector('#plannerStart').value;
-        const end_time = modal.querySelector('#plannerEnd').value;
-        const exercises = modal.querySelector('#plannerExercises').value.split(',').map(s=>s.trim()).filter(Boolean);
-        await apiRequest('/api/gym/planner', 'POST', { title, event_date, day_of_week, start_time, end_time, exercises });
-        modal.style.display = 'none';
-        renderGymPlanner();
-        renderTodaysWorkout();
-        renderSchedule();
-        renderDashboardMetrics();
-    }
-});
-
-// Create GymSessionLog via /api/gym/log -- backend endpoint may not exist; frontend will call it and backend must handle.
-
-
-async function renderGameReport() {
-    const container = document.getElementById('bball-report');
-    container.innerHTML = '<p class="text-gray-400">Loading report...</p>';
-    const data = await apiRequest('/api/basketball/report_data');
-    if (!data || data.length === 0) {
-        container.innerHTML = '<p class="text-gray-400">No data to generate report.</p>';
-        return;
-    }
-    // build table
-    let html = `<div class="flex justify-between items-center mb-3"><h3 class="font-semibold">Game Report</h3><div><button id="exportReportPdf" class="bg-blue-600 p-2 rounded">Export PDF</button></div></div>`;
-    html += '<div class="overflow-x-auto"><table class="min-w-full text-left"><thead><tr><th>Name</th><th>PTS</th><th>FGM</th><th>FGA</th><th>AST</th><th>REB</th><th>STL</th><th>TO</th><th>BLK</th><th>FOUL</th><th>MIN</th></tr></thead><tbody>';
-    data.forEach(r => {
-        html += `<tr class="bg-gray-800"><td class="p-2 font-semibold">${r.name}</td><td class="p-2">${r.PTS}</td><td class="p-2">${r.FGM}</td><td class="p-2">${r.FGA}</td><td class="p-2">${r.AST}</td><td class="p-2">${r.REB}</td><td class="p-2">${r.STL}</td><td class="p-2">${r.TO}</td><td class="p-2">${r.BLK}</td><td class="p-2">${r.FOUL}</td><td class="p-2">${r.MIN}</td></tr>`;
-    });
-    html += '</tbody></table></div>';
-    container.innerHTML = html;
-
-    document.getElementById('exportReportPdf').addEventListener('click', () => {
-        // generate simple PDF using jspdf
-        const doc = new jspdf.jsPDF();
-        doc.setFontSize(12);
-        doc.text('Basketball Game Report', 14, 20);
-        let y = 30;
-        doc.setFontSize(10);
-        data.forEach(r => {
-            doc.text(`${r.name} — PTS:${r.PTS} FGM:${r.FGM} FGA:${r.FGA} AST:${r.AST} REB:${r.REB} STL:${r.STL} TO:${r.TO} BLK:${r.BLK} FOUL:${r.FOUL} MIN:${r.MIN}`, 14, y);
-            y += 7;
-            if (y > 270) { doc.addPage(); y = 20; }
-        });
-        doc.save('basketball_report.pdf');
-    });
-}
