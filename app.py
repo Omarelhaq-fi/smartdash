@@ -4,7 +4,6 @@ from flask import Flask, render_template, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
 from datetime import datetime, date, timedelta
-import json
 
 app = Flask(__name__)
 
@@ -16,10 +15,7 @@ DATABASE = 'db_abc901_elhaqom'
 
 app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{USER}:{PASSWORD}@{SERVER}/{DATABASE}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ECHO'] = False
-app.config['SQLALCHEMY_POOL_RECYCLE'] = 240
-app.config['SQLALCHEMY_POOL_TIMEOUT'] = 20
-app.config['SQLALCHEMY_POOL_PRE_PING'] = True
+app.config['SQLALCHEMY_ECHO'] = False # Set to True to see generated SQL in your terminal
 
 db = SQLAlchemy(app)
 
@@ -39,12 +35,14 @@ class Lecture(db.Model):
     uni_lecs = db.Column(db.Integer, default=1)
     studied = db.Column(db.Integer, default=0)
     revised = db.Column(db.Boolean, default=False)
-    total_time = db.Column(db.Integer, default=0)
+    total_time = db.Column(db.Integer, default=0) # in seconds
+    pomodoros_done = db.Column(db.Integer, default=0) # New field
+    finished_date = db.Column(db.Date, nullable=True) # New field
 
 class Flashcard(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=False)
-    lecture_id = db.Column(db.Integer, nullable=False)
+    lecture_id = db.Column(db.Integer, nullable=False) # Maps to lecture_number
     front = db.Column(db.Text, nullable=False)
     back = db.Column(db.Text, nullable=False)
 
@@ -62,9 +60,9 @@ class Mistake(db.Model):
 class PomodoroLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.DateTime, default=datetime.utcnow)
-    duration = db.Column(db.Integer, nullable=False)
+    duration = db.Column(db.Integer, nullable=False) # in seconds
     subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=True)
-    lecture_id = db.Column(db.Integer, nullable=True)
+    lecture_id = db.Column(db.Integer, nullable=True) # Maps to lecture_number
 
 class Course(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -84,6 +82,7 @@ class CustomEvent(db.Model):
     event_date = db.Column(db.Date, default=date.today)
     color = db.Column(db.String(20), default='purple')
 
+# --- Gym Models ---
 class Exercise(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False, unique=True)
@@ -91,6 +90,7 @@ class Exercise(db.Model):
     cues = db.Column(db.String(255))
     tags = db.Column(db.JSON)
     prs = db.relationship('PR', backref='exercise', lazy=True, cascade="all, delete-orphan")
+    sessions = db.relationship('GymSessionLog', backref='exercise', lazy=True)
 
 class PR(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -99,6 +99,15 @@ class PR(db.Model):
     reps = db.Column(db.Integer, nullable=False)
     date = db.Column(db.Date, default=date.today)
 
+class GymSessionLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    exercise_id = db.Column(db.Integer, db.ForeignKey('exercise.id'), nullable=False)
+    date = db.Column(db.Date, default=date.today)
+    sets = db.Column(db.Integer)
+    reps = db.Column(db.Integer)
+    weight = db.Column(db.Float)
+
+# --- Basketball Models ---
 class BasketballPlayer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False, unique=True)
@@ -120,19 +129,22 @@ class Shot(db.Model):
     player_id = db.Column(db.Integer, db.ForeignKey('basketball_player.id'), nullable=False)
     player = db.relationship('BasketballPlayer')
 
+
 # --- Helper Functions ---
 def to_dict(model_instance):
     if model_instance is None: return None
     d = {}
     for column in model_instance.__table__.columns:
         value = getattr(model_instance, column.name)
-        if isinstance(value, (datetime, date, db.Time)): value = value.isoformat()
+        if isinstance(value, (datetime, date, db.Model.metadata.tables['custom_event'].c.start_time.type.python_type)):
+            value = value.isoformat()
         d[column.name] = value
     return d
 
 def ensure_defaults_exist():
     if not BasketballPlayer.query.first():
-        db.session.add(BasketballPlayer(name='Player 1'))
+        default_player = BasketballPlayer(name='Player 1')
+        db.session.add(default_player)
         db.session.commit()
 
 # --- HTML Routes ---
@@ -144,22 +156,47 @@ def index():
     return render_template('index.html')
 
 # --- API Routes ---
+
+# Dashboard
 @app.route('/api/dashboard_metrics', methods=['GET'])
 def get_dashboard_metrics():
     today = date.today()
+    
+    # Lecture Goal
+    lectures_finished_today = db.session.query(func.count(Lecture.id)).filter(Lecture.finished_date == today).scalar()
+    lecture_goal = 2 # Hardcoded for now, could be a setting
+    
+    # Gym Goal
+    gym_sessions_today = db.session.query(func.count(GymSessionLog.id)).filter(GymSessionLog.date == today).scalar()
+    gym_goal = 1 # Hardcoded
+    
+    # Course Goal
+    # This is a placeholder; real logic would be more complex
+    course_sessions_today = 0 
+    course_goal = 1
+
+    # Pomodoro Summary
     start_of_week = today - timedelta(days=today.weekday())
     start_of_month = today.replace(day=1)
     daily_total = db.session.query(func.sum(PomodoroLog.duration)).filter(func.date(PomodoroLog.date) == today).scalar() or 0
     weekly_total = db.session.query(func.sum(PomodoroLog.duration)).filter(PomodoroLog.date >= start_of_week).scalar() or 0
     monthly_total = db.session.query(func.sum(PomodoroLog.duration)).filter(PomodoroLog.date >= start_of_month).scalar() or 0
+    
     exams = Exam.query.order_by(Exam.date.asc()).all()
     weak_topics = Mistake.query.join(Subject).with_entities(Mistake.topic, Subject.name).limit(5).all()
+
     return jsonify({
+        'goals': {
+            'lectures': {'current': lectures_finished_today, 'target': lecture_goal},
+            'gym': {'current': gym_sessions_today, 'target': gym_goal},
+            'courses': {'current': course_sessions_today, 'target': course_goal}
+        },
         'pomodoro': {'daily': daily_total, 'weekly': weekly_total, 'monthly': monthly_total},
         'exams': [to_dict(e) for e in exams],
         'weak_topics': [{'topic': wt[0], 'subject_name': wt[1]} for wt in weak_topics]
     })
 
+# Subjects & Lectures
 @app.route('/api/subjects', methods=['GET'])
 def get_subjects():
     subjects = Subject.query.options(db.joinedload(Subject.lectures)).order_by(Subject.id).all()
@@ -173,6 +210,8 @@ def get_subjects():
 @app.route('/api/subjects', methods=['POST'])
 def add_subject():
     data = request.json
+    if not data or 'name' not in data or not data['name'].strip(): return jsonify({'error': 'Subject name is required'}), 400
+    if Subject.query.filter_by(name=data['name'].strip()).first(): return jsonify({'error': 'Subject with this name already exists'}), 409
     new_subject = Subject(name=data['name'].strip())
     db.session.add(new_subject)
     db.session.commit()
@@ -180,8 +219,10 @@ def add_subject():
 
 @app.route('/api/subjects/<int:subject_id>/lectures', methods=['POST'])
 def add_lecture(subject_id):
+    subject = Subject.query.get_or_404(subject_id)
     last_lecture = Lecture.query.filter_by(subject_id=subject_id).order_by(Lecture.lecture_number.desc()).first()
-    new_lecture = Lecture(subject_id=subject_id, lecture_number=(last_lecture.lecture_number + 1) if last_lecture else 1)
+    new_lecture_number = (last_lecture.lecture_number + 1) if last_lecture else 1
+    new_lecture = Lecture(subject_id=subject.id, lecture_number=new_lecture_number)
     db.session.add(new_lecture)
     db.session.commit()
     return jsonify(to_dict(new_lecture)), 201
@@ -190,132 +231,96 @@ def add_lecture(subject_id):
 def update_lecture(lecture_id):
     data = request.json
     lecture = Lecture.query.get_or_404(lecture_id)
+    
     lecture.uni_lecs = data.get('uni_lecs', lecture.uni_lecs)
     lecture.studied = data.get('studied', lecture.studied)
     lecture.revised = data.get('revised', lecture.revised)
+    
+    # Check if the lecture is now finished
+    if lecture.studied is not None and lecture.uni_lecs is not None and lecture.studied >= lecture.uni_lecs:
+        if lecture.finished_date is None:
+            lecture.finished_date = date.today()
+    else:
+        lecture.finished_date = None # Reset if no longer finished
+
     db.session.commit()
     return jsonify(to_dict(lecture))
 
+# Exams, Mistakes, Courses, Schedule... (These routes are unchanged)
+@app.route('/api/exams', methods=['GET'])
+def get_exams(): return jsonify([to_dict(e) for e in Exam.query.order_by(Exam.date.asc()).all()])
+@app.route('/api/exams', methods=['POST'])
+def add_exam(): data = request.json; new_exam = Exam(name=data['name'], date=datetime.strptime(data['date'], '%Y-%m-%d').date()); db.session.add(new_exam); db.session.commit(); return jsonify(to_dict(new_exam)), 201
+@app.route('/api/mistakes', methods=['POST'])
+def add_mistake(): data = request.json; new_mistake = Mistake(topic=data['topic'], description=data['description'], subject_id=data['subject_id']); db.session.add(new_mistake); db.session.commit(); return jsonify(to_dict(new_mistake)), 201
 @app.route('/api/courses', methods=['GET'])
-def get_courses():
-    return jsonify([to_dict(c) for c in Course.query.all()])
-
+def get_courses(): return jsonify([to_dict(c) for c in Course.query.all()])
 @app.route('/api/courses', methods=['POST'])
-def add_course():
-    data = request.json
-    new_course = Course(title=data.get('title'), platform=data.get('platform'), category=data.get('category'), total_units=data.get('total_units'), completed_units=data.get('completed_units'), target_date=datetime.strptime(data['target_date'], '%Y-%m-%d').date() if data.get('target_date') else None, sessions_per_week=data.get('sessions_per_week'))
-    db.session.add(new_course)
-    db.session.commit()
-    return jsonify(to_dict(new_course)), 201
+def add_course(): data = request.json; new_course = Course(title=data.get('title'), platform=data.get('platform'), category=data.get('category'), total_units=data.get('total_units'), completed_units=data.get('completed_units'), target_date=datetime.strptime(data['target_date'], '%Y-%m-%d').date() if data.get('target_date') else None, sessions_per_week=data.get('sessions_per_week')); db.session.add(new_course); db.session.commit(); return jsonify(to_dict(new_course)), 201
+@app.route('/api/schedule', methods=['GET'])
+def get_schedule(): return jsonify([to_dict(e) for e in CustomEvent.query.filter_by(event_date=date.today()).all()])
+@app.route('/api/schedule', methods=['POST'])
+def add_custom_event(): data = request.json; start_time = datetime.strptime(data['start_time'], '%H:%M').time(); end_time = datetime.strptime(data['end_time'], '%H:%M').time(); new_event = CustomEvent(title=data.get('title'), start_time=start_time, end_time=end_time, color=data.get('color', 'purple')); db.session.add(new_event); db.session.commit(); return jsonify(to_dict(new_event)), 201
+@app.route('/api/subjects/<int:subject_id>/lectures/<int:lecture_id>/flashcards', methods=['GET'])
+def get_flashcards(subject_id, lecture_id): return jsonify([to_dict(f) for f in Flashcard.query.filter_by(subject_id=subject_id, lecture_id=lecture_id).all()])
+@app.route('/api/flashcards', methods=['POST'])
+def add_flashcard(): data = request.json; new_flashcard = Flashcard(subject_id=data['subject_id'], lecture_id=data['lecture_id'], front=data['front'], back=data['back']); db.session.add(new_flashcard); db.session.commit(); return jsonify(to_dict(new_flashcard)), 201
 
+# --- Pomodoro Route ---
 @app.route('/api/pomodoro', methods=['POST'])
 def log_pomodoro():
     data = request.json
     log = PomodoroLog(duration=data['duration'], subject_id=data.get('subject_id'), lecture_id=data.get('lecture_id'))
     db.session.add(log)
+    
     if data.get('subject_id') and data.get('lecture_id'):
         lecture = Lecture.query.filter_by(subject_id=data['subject_id'], id=data['lecture_id']).first()
         if lecture:
             lecture.total_time = (lecture.total_time or 0) + data['duration']
+            lecture.pomodoros_done = (lecture.pomodoros_done or 0) + 1
+
     db.session.commit()
     return jsonify(to_dict(log)), 201
 
-@app.route('/api/basketball/players', methods=['POST'])
-def add_bball_player():
-    data = request.json
-    name = data['name'].strip()
-    new_player = BasketballPlayer(name=name)
-    db.session.add(new_player)
-    db.session.commit()
-    return jsonify(to_dict(new_player)), 201
+# --- Gym API Routes ---
+@app.route('/api/gym/exercises', methods=['GET'])
+def get_exercises(): return jsonify([to_dict(ex) for ex in Exercise.query.all()])
+@app.route('/api/gym/exercises', methods=['POST'])
+def add_exercise(): data = request.json; new_ex = Exercise(name=data['name'], group=data['group'], cues=data['cues'], tags=data['tags']); db.session.add(new_ex); db.session.commit(); return jsonify(to_dict(new_ex)), 201
+@app.route('/api/gym/prs', methods=['GET'])
+def get_prs(): prs = PR.query.join(Exercise).with_entities(PR, Exercise.name).order_by(PR.date.desc()).all(); result = []; [result.append({**to_dict(pr), 'exercise_name': ex_name}) for pr, ex_name in prs]; return jsonify(result)
 
+# --- Basketball API Routes ---
+@app.route('/api/basketball/players', methods=['POST'])
+def add_bball_player(): data = request.json; name = data['name'].strip(); new_player = BasketballPlayer(name=name); db.session.add(new_player); db.session.commit(); return jsonify(to_dict(new_player)), 201
 @app.route('/api/basketball/data', methods=['GET'])
 def get_bball_data():
     players = BasketballPlayer.query.all()
     tags = VideoTag.query.options(db.joinedload(VideoTag.player)).order_by(VideoTag.time).all()
     shots = Shot.query.options(db.joinedload(Shot.player)).all()
-    stats = {p.id: {'name': p.name, 'FGM': 0, 'FGA': 0, 'AST': 0, 'PTS': 0} for p in players}
-    for tag in tags:
-        if tag.player_id not in stats: continue
-        if tag.stat_type == 'fga_made':
-            stats[tag.player_id]['FGM'] += 1
-            stats[tag.player_id]['FGA'] += 1
-        elif tag.stat_type == 'fga_missed':
-            stats[tag.player_id]['FGA'] += 1
-        elif tag.stat_type == 'ast':
-            stats[tag.player_id]['AST'] += 1
-    for p_id in stats:
-        stats[p_id]['PTS'] = stats[p_id]['FGM'] * 2
     return jsonify({
         'players': [to_dict(p) for p in players],
-        'tags': [{**to_dict(t), 'player_name': t.player.name if t.player else 'Unknown Player'} for t in tags],
-        'shots': [to_dict(s) for s in shots],
-        'stats': list(stats.values())
+        'tags': [{**to_dict(t), 'player_name': t.player.name} for t in tags],
+        'shots': [to_dict(s) for s in shots]
     })
 
+@app.route('/api/basketball/report_data', methods=['GET'])
+def get_bball_report_data():
+    players = BasketballPlayer.query.all()
+    stats = {p.id: {'name': p.name, 'FGM': 0, 'FGA': 0, 'AST': 0, 'PTS': 0} for p in players}
+    tags = VideoTag.query.all()
+    for tag in tags:
+        if tag.player_id not in stats: continue
+        if tag.stat_type == 'fga_made': stats[tag.player_id]['FGM'] += 1; stats[tag.player_id]['FGA'] += 1
+        elif tag.stat_type == 'fga_missed': stats[tag.player_id]['FGA'] += 1
+        elif tag.stat_type == 'ast': stats[tag.player_id]['AST'] += 1
+    for p_id in stats: stats[p_id]['PTS'] = stats[p_id]['FGM'] * 2
+    return jsonify(list(stats.values()))
+
 @app.route('/api/basketball/tags', methods=['POST'])
-def add_bball_tag():
-    data = request.json
-    new_tag = VideoTag(time=data['time'], player_id=data['player_id'], category=data['category'], action=data['action'], stat_type=data['stat_type'])
-    db.session.add(new_tag)
-    db.session.commit()
-    return jsonify(to_dict(new_tag)), 201
-
+def add_bball_tag(): data = request.json; new_tag = VideoTag(time=data['time'], player_id=data['player_id'], category=data['category'], action=data['action'], stat_type=data['stat_type']); db.session.add(new_tag); db.session.commit(); return jsonify(to_dict(new_tag)), 201
 @app.route('/api/basketball/shots', methods=['POST'])
-def add_bball_shot():
-    data = request.json
-    player_id = data.get('player_id', 1)
-    new_shot = Shot(x=data['x'], y=data['y'], made=data['made'], player_id=player_id)
-    db.session.add(new_shot)
-    db.session.commit()
-    return jsonify(to_dict(new_shot)), 201
-
-@app.route('/api/exams', methods=['GET'])
-def get_exams():
-    return jsonify([to_dict(e) for e in Exam.query.order_by(Exam.date.asc()).all()])
-
-@app.route('/api/exams', methods=['POST'])
-def add_exam():
-    data = request.json
-    new_exam = Exam(name=data['name'], date=datetime.strptime(data['date'], '%Y-%m-%d').date())
-    db.session.add(new_exam)
-    db.session.commit()
-    return jsonify(to_dict(new_exam)), 201
-
-@app.route('/api/schedule', methods=['GET'])
-def get_schedule():
-    return jsonify([to_dict(e) for e in CustomEvent.query.filter_by(event_date=date.today()).all()])
-
-@app.route('/api/schedule', methods=['POST'])
-def add_custom_event():
-    data = request.json
-    start_time = datetime.strptime(data['start_time'], '%H:%M').time()
-    end_time = datetime.strptime(data['end_time'], '%H:%M').time()
-    new_event = CustomEvent(title=data.get('title'), start_time=start_time, end_time=end_time, color=data.get('color', 'purple'))
-    db.session.add(new_event)
-    db.session.commit()
-    return jsonify(to_dict(new_event)), 201
-    
-@app.route('/api/mistakes', methods=['POST'])
-def add_mistake():
-    data = request.json
-    new_mistake = Mistake(topic=data['topic'], description=data['description'], subject_id=data['subject_id'])
-    db.session.add(new_mistake)
-    db.session.commit()
-    return jsonify(to_dict(new_mistake)), 201
-
-@app.route('/api/flashcards/<int:subject_id>/<int:lecture_id>', methods=['GET'])
-def get_flashcards(subject_id, lecture_id):
-    flashcards = Flashcard.query.filter_by(subject_id=subject_id, lecture_id=lecture_id).all()
-    return jsonify([to_dict(f) for f in flashcards])
-
-@app.route('/api/flashcards', methods=['POST'])
-def add_flashcard():
-    data = request.json
-    new_flashcard = Flashcard(subject_id=data['subject_id'], lecture_id=data['lecture_id'], front=data['front'], back=data['back'])
-    db.session.add(new_flashcard)
-    db.session.commit()
-    return jsonify(to_dict(new_flashcard)), 201
+def add_bball_shot(): data = request.json; player_id = data.get('player_id', 1); new_shot = Shot(x=data['x'], y=data['y'], made=data['made'], player_id=player_id); db.session.add(new_shot); db.session.commit(); return jsonify(to_dict(new_shot)), 201
 
 if __name__ == '__main__':
     app.run(debug=True)
