@@ -282,7 +282,7 @@ def add_flashcard(): data = request.json; new_flashcard = Flashcard(subject_id=d
 @app.route('/api/schedule', methods=['GET'])
 def get_schedule():
     today = date.today()
-    day_of_week = (today.weekday() - 1 + 7) % 7 # Monday = 0
+    day_of_week = (today.weekday() - 1 + 7) % 7 # Monday = 0, Sunday = 6
     custom_events = CustomEvent.query.filter_by(event_date=today).all()
     gym_schedules = GymSchedule.query.filter_by(day_of_week=day_of_week).options(db.joinedload(GymSchedule.exercises).joinedload(WorkoutExercise.exercise)).all()
 
@@ -293,7 +293,7 @@ def get_schedule():
         schedule_dict['title'] = s.workout_name
         schedule_dict['color'] = 'green' # Use a distinct color for gym workouts
         schedule_dict['event_type'] = 'gym_workout'
-        schedule_dict['description'] = 'Workout: ' + ', '.join([e.exercise.name for e in s.exercises])
+        schedule_dict['description'] = 'Workout: ' + ', '.join([f'{we.exercise.name} ({we.sets}x{we.reps})' for we in s.exercises])
         events.append(schedule_dict)
     
     return jsonify(events)
@@ -395,4 +395,3 @@ def add_bball_shot(): data = request.json; player_id = data.get('player_id', 1);
 
 if __name__ == '__main__':
     app.run(debug=True)
- 
