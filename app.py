@@ -1,5 +1,19 @@
 # app.py
 import os
+
+def safe_gymplanner_query(fn):
+    try:
+        return fn()
+    except Exception as e:
+        print("GymPlanner query error:", e)
+        try:
+            with app.app_context():
+                db.create_all()
+            return fn()
+        except Exception as e2:
+            print("GymPlanner retry failed:", e2)
+            return []
+
 from flask import Flask, render_template, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
@@ -199,7 +213,7 @@ def get_dashboard_metrics():
 
     
     # Gym unfinished: find planners that apply today (by event_date == today or day_of_week == today.weekday())
-    planners_today = GymPlanner.query.filter((GymPlanner.event_date == today) | (GymPlanner.day_of_week == today.weekday())).all()
+    planners_today = safe_gymplanner_query(lambda: GymPlanner.query.filter((GymPlanner.event_date == today) | (GymPlanner.day_of_week == today.weekday())).all())
     # If there is at least one planner today and no GymSessionLog for today, mark as unfinished
     gym_logs_today = gym_sessions_today
     gym_today_unfinished = True if planners_today and gym_logs_today == 0 else False
@@ -309,7 +323,7 @@ def add_exercise(): data = request.json; new_ex = Exercise(name=data['name'], gr
 def get_prs(): prs = PR.query.join(Exercise).with_entities(PR, Exercise.name).order_by(PR.date.desc()).all(); result = []; [result.append({**to_dict(pr), 'exercise_name': ex_name}) for pr, ex_name in prs]; return jsonify(result)
 @app.route('/api/gym/planner', methods=['GET'])
 def get_gym_planner():
-    planners = GymPlanner.query.order_by(GymPlanner.event_date.asc().nullsfirst(), GymPlanner.day_of_week.asc().nullsfirst()).all()
+    planners = safe_gymplanner_query(lambda: GymPlanner.query.order_by(GymPlanner.event_date.asc().nullsfirst(), GymPlanner.day_of_week.asc().nullsfirst()).all())
     return jsonify([to_dict(p) for p in planners])
 
 @app.route('/api/gym/planner', methods=['POST'])
@@ -337,7 +351,7 @@ def add_gym_planner():
 
 @app.route('/api/gym/planner/<int:planner_id>', methods=['DELETE'])
 def delete_gym_planner(planner_id):
-    pl = GymPlanner.query.get_or_404(planner_id)
+    pl = safe_gymplanner_query(lambda: GymPlanner.query.get_or_404(planner_id))
     db.session.delete(pl)
     db.session.commit()
     return jsonify({'status':'deleted'}), 200
@@ -411,7 +425,7 @@ def create_gym_log():
     # If planner provided, create a GymSessionLog for today linked to first exercise if available
     today = date.today()
     if planner_id:
-        pl = GymPlanner.query.get(planner_id)
+        pl = safe_gymplanner_query(lambda: GymPlanner.query.get(planner_id))
         if pl:
             ex_name = None
             ex = None
@@ -440,4 +454,4 @@ def create_gym_log():
     log = GymSessionLog(exercise_id=ex.id, date=today, sets=data.get('sets',0), reps=data.get('reps',0), weight=data.get('weight',0))
     db.session.add(log)
     db.session.commit()
-    return jsonify(to_dict(log)), 201 
+    return jsonify(to_dict(log)), 201
