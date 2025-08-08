@@ -31,8 +31,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         } catch (error) {
             console.error(`API request failed: ${method} ${url}`, error);
-            alert(`Error: ${error.message}`);
-            throw error;
+            // Replace alert with a custom message box
+            // alert(`Error: ${error.message}`);
+            // throw error;
         }
     }
 
@@ -127,7 +128,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const actions = {
             'addSubjectBtn': addSubject, 'addExamBtn': addExam, 'addMistakeBtn': openMistakeModal, 'saveMistakeBtn': saveMistake,
             'addCourseBtn': openCourseModal, 'saveCourseBtn': saveCourse, 'addCustomEventBtn': openCustomEventModal, 'saveCustomEventBtn': saveCustomEvent,
-            'addExerciseBtn': openExerciseModal, 'saveExerciseBtn': saveExercise, 'import-video-btn': () => document.getElementById('video-upload').click(),
+            'addExerciseBtn': openExerciseModal, 'saveExerciseBtn': saveExercise, 'addGymWorkoutBtn': openGymScheduleModal, 'saveGymWorkoutBtn': saveGymWorkout,
+            'import-video-btn': () => document.getElementById('video-upload').click(),
             'add-tag-btn': openTaggingModal, 'saveTagBtn': saveTag, 'shot-made-btn': () => logShot(true), 'shot-missed-btn': () => logShot(false),
             'flipFlashcard': () => document.querySelector('.flashcard').classList.toggle('is-flipped'), 'prevFlashcard': () => navigateFlashcard(-1), 'nextFlashcard': () => navigateFlashcard(1),
             'addFlashcardBtn': addFlashcard, 'startStopBtn': () => isRunning ? stopTimer() : startTimer(), 'resetTimerBtn': resetTimer, 'skipBtn': () => switchMode(true),
@@ -144,6 +146,8 @@ document.addEventListener('DOMContentLoaded', function() {
             openExerciseModal(targetButton.dataset.exerciseId);
         } else if (e.target.id === 'shot-chart-container') {
             handleShotChartClick(e);
+        } else if (targetButton?.classList.contains('add-exercise-to-workout')) {
+            addExerciseToWorkout(targetButton.dataset.exerciseId, targetButton.dataset.exerciseName);
         }
     }
 
@@ -186,13 +190,148 @@ document.addEventListener('DOMContentLoaded', function() {
     async function renderCourses() { const courses = await apiRequest('/api/courses'); const container = document.getElementById('courseLibraryContainer'); container.innerHTML = ''; if (courses.length === 0) { container.innerHTML = '<p class="text-gray-400 md:col-span-2">No courses added.</p>'; return; } courses.forEach(c => { const progress = c.total_units > 0 ? (c.completed_units / c.total_units) * 100 : 0; container.innerHTML += `<div class="bg-gray-700 p-4 rounded-lg"><h3 class="font-bold">${c.title}</h3><p class="text-sm text-gray-400">${c.platform} - ${c.category}</p><div class="mt-3"><div class="flex justify-between text-sm mb-1"><span>Progress</span><span>${Math.round(progress)}%</span></div><div class="w-full bg-gray-600 rounded-full h-2.5"><div class="bg-blue-500 h-2.5 rounded-full" style="width: ${progress}%"></div></div><p class="text-xs text-gray-500 mt-1">${c.completed_units}/${c.total_units} units</p></div></div>`; }); }
     function openCourseModal() { document.getElementById('courseModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Add Course</h2><div class="space-y-4"><input type="text" id="courseTitleInput" placeholder="Title" class="bg-gray-700 w-full p-2 rounded"><div class="grid grid-cols-2 gap-4"><input type="text" id="coursePlatformInput" placeholder="Platform" class="bg-gray-700 w-full p-2 rounded"><input type="text" id="courseCategoryInput" placeholder="Category" class="bg-gray-700 w-full p-2 rounded"></div><div class="grid grid-cols-2 gap-4"><input type="number" id="courseTotalUnitsInput" placeholder="Total Units" class="bg-gray-700 w-full p-2 rounded"><input type="number" id="courseCompletedUnitsInput" placeholder="Completed Units" class="bg-gray-700 w-full p-2 rounded"></div><div><label class="text-sm">Target Date</label><input type="date" id="courseTargetDateInput" class="bg-gray-700 w-full p-2 rounded"></div><input type="number" id="courseSessionsWeekInput" placeholder="Target Sessions/Week" class="bg-gray-700 w-full p-2 rounded"><button id="saveCourseBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('courseModal').style.display = 'flex'; }
     async function saveCourse() { const modal = document.getElementById('courseModal'); const data = { title: modal.querySelector('#courseTitleInput').value, platform: modal.querySelector('#coursePlatformInput').value, category: modal.querySelector('#courseCategoryInput').value, total_units: parseInt(modal.querySelector('#courseTotalUnitsInput').value) || 0, completed_units: parseInt(modal.querySelector('#courseCompletedUnitsInput').value) || 0, target_date: modal.querySelector('#courseTargetDateInput').value, sessions_per_week: parseInt(modal.querySelector('#courseSessionsWeekInput').value) || 1 }; await apiRequest('/api/courses', 'POST', data); modal.style.display = 'none'; renderCourses(); }
-    async function renderSchedule() { const events = await apiRequest('/api/schedule'); const container = document.getElementById('timeline-container'); if (!container) return; container.innerHTML = ''; for (let i = 0; i < 24; i++) { container.innerHTML += `<div class="timeline-hour"><span class="timeline-hour-label">${i.toString().padStart(2, '0')}:00</span></div>`; } events.forEach(e => { const startMinutes = timeToMinutes(e.start_time); const endMinutes = timeToMinutes(e.end_time); const duration = endMinutes - startMinutes; container.innerHTML += `<div class="timeline-event" style="top:${startMinutes}px; height:${duration}px; background-color:rgba(${getColor(e.color)}, 0.5); border-color:rgb(${getColor(e.color)});"><p class="font-bold">${e.title}</p></div>`; }); }
+    async function renderSchedule() {
+        const events = await apiRequest('/api/schedule');
+        const container = document.getElementById('timeline-container');
+        if (!container) return;
+        container.innerHTML = '';
+        for (let i = 0; i < 24; i++) {
+            container.innerHTML += `<div class="timeline-hour"><span class="timeline-hour-label">${i.toString().padStart(2, '0')}:00</span></div>`;
+        }
+        events.forEach(e => {
+            const startMinutes = timeToMinutes(e.start_time);
+            const endMinutes = timeToMinutes(e.end_time);
+            const duration = endMinutes - startMinutes;
+            const color = e.color || 'purple'; // Use color from event, default to purple
+            const eventHtml = `<div class="timeline-event" style="top:${startMinutes}px; height:${duration}px; background-color:rgba(${getColor(color)}, 0.5); border-color:rgb(${getColor(color)});"><p class="font-bold">${e.title}</p>${e.description ? `<p class="text-xs text-gray-200">${e.description}</p>` : ''}</div>`;
+            container.innerHTML += eventHtml;
+        });
+    }
     function openCustomEventModal() { document.getElementById('customEventModal').innerHTML = `<div class="modal-content"><span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span><h2 class="text-xl font-bold mb-4">Add Custom Event</h2><div class="space-y-4"><input type="text" id="customEventTitle" placeholder="Title" class="bg-gray-700 w-full p-2 rounded"><div class="grid grid-cols-2 gap-4"><div><label class="text-sm">Start</label><input type="time" id="customEventStart" class="bg-gray-700 w-full p-2 rounded"></div><div><label class="text-sm">End</label><input type="time" id="customEventEnd" class="bg-gray-700 w-full p-2 rounded"></div></div><div><label class="text-sm">Color</label><select id="customEventColor" class="bg-gray-700 w-full p-2 rounded"><option value="purple">Purple</option><option value="yellow">Yellow</option><option value="teal">Teal</option></select></div><button id="saveCustomEventBtn" class="w-full bg-blue-600 p-2 rounded">Save</button></div></div>`; document.getElementById('customEventModal').style.display = 'flex'; }
     async function saveCustomEvent() { const modal = document.getElementById('customEventModal'); const data = { title: modal.querySelector('#customEventTitle').value, start_time: modal.querySelector('#customEventStart').value, end_time: modal.querySelector('#customEventEnd').value, color: modal.querySelector('#customEventColor').value }; if (data.title && data.start_time && data.end_time) { await apiRequest('/api/schedule', 'POST', data); modal.style.display = 'none'; renderSchedule(); } }
 
     // --- GYM FUNCTIONS ---
     function renderTodaysWorkout() { document.getElementById('gym-today').innerHTML = '<p class="text-gray-400">Today\'s workout plan coming soon...</p>'; }
-    function renderGymPlanner() { document.getElementById('gym-planner').innerHTML = '<p class="text-gray-400">Weekly planner coming soon...</p>'; }
+    async function renderGymPlanner() {
+        const schedules = await apiRequest('/api/gym/schedule');
+        const container = document.getElementById('gym-planner');
+        const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        container.innerHTML = `
+            <h2 class="text-2xl font-semibold mb-4">Weekly Planner</h2>
+            <button id="addGymWorkoutBtn" class="mb-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add New Workout</button>
+            <div id="weeklyGymSchedule" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
+        `;
+        const scheduleContainer = document.getElementById('weeklyGymSchedule');
+        const schedulesByDay = schedules.reduce((acc, curr) => {
+            if (!acc[curr.day_of_week]) acc[curr.day_of_week] = [];
+            acc[curr.day_of_week].push(curr);
+            return acc;
+        }, {});
+
+        for (let i = 0; i < 7; i++) {
+            const dayName = days[i];
+            const workouts = schedulesByDay[i] || [];
+            let workoutsHtml = workouts.length === 0
+                ? `<p class="text-gray-400 text-sm">No workout scheduled.</p>`
+                : workouts.map(w => `
+                    <div class="bg-gray-700 p-3 rounded-lg mt-2">
+                        <h4 class="font-bold">${w.workout_name}</h4>
+                        <p class="text-xs text-gray-400">${w.start_time} - ${w.end_time}</p>
+                        <ul class="list-disc list-inside text-sm text-gray-300 mt-2">
+                            ${w.exercises.map(ex => `<li>${ex.name} (${ex.sets}x${ex.reps})</li>`).join('')}
+                        </ul>
+                    </div>
+                `).join('');
+            
+            scheduleContainer.innerHTML += `
+                <div class="bg-gray-800 p-4 rounded-lg">
+                    <h3 class="font-bold text-lg mb-2">${dayName}</h3>
+                    <hr class="border-gray-700 mb-2">
+                    ${workoutsHtml}
+                </div>
+            `;
+        }
+    }
+    async function openGymScheduleModal() {
+        const exercises = await apiRequest('/api/gym/exercises');
+        const modal = document.getElementById('gymScheduleModal');
+        let exerciseOptions = exercises.map(ex => `<option value="${ex.id}" data-name="${ex.name}">${ex.name}</option>`).join('');
+        
+        modal.innerHTML = `
+            <div class="modal-content">
+                <span class="close-modal absolute top-4 right-6 text-2xl font-bold cursor-pointer">&times;</span>
+                <h2 class="text-xl font-bold mb-4">Add New Workout</h2>
+                <div class="space-y-4">
+                    <input type="text" id="workoutNameInput" placeholder="Workout Name (e.g., Push Day)" class="bg-gray-700 w-full p-2 rounded">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div><label class="text-sm">Day</label><select id="workoutDayInput" class="bg-gray-700 w-full p-2 rounded">
+                            <option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option>
+                            <option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option>
+                            <option value="6">Sunday</option>
+                        </select></div>
+                        <div><label class="text-sm">Start Time</label><input type="time" id="workoutStartTimeInput" class="bg-gray-700 w-full p-2 rounded"></div>
+                        <div><label class="text-sm">End Time</label><input type="time" id="workoutEndTimeInput" class="bg-gray-700 w-full p-2 rounded"></div>
+                    </div>
+                    <div class="bg-gray-700 p-4 rounded-lg">
+                        <h3 class="font-bold mb-2">Exercises</h3>
+                        <div id="selectedExercisesContainer" class="space-y-2 mb-4"></div>
+                        <div class="flex items-center gap-2">
+                            <select id="exerciseToAdd" class="bg-gray-800 w-full p-2 rounded">${exerciseOptions}</select>
+                            <button id="addExerciseToWorkoutBtn" class="bg-green-600 p-2 rounded text-white">Add</button>
+                        </div>
+                    </div>
+                    <button id="saveGymWorkoutBtn" class="w-full bg-blue-600 p-2 rounded">Save Workout</button>
+                </div>
+            </div>
+        `;
+        document.getElementById('addExerciseToWorkoutBtn').addEventListener('click', () => {
+            const select = document.getElementById('exerciseToAdd');
+            const exerciseId = select.value;
+            const exerciseName = select.options[select.selectedIndex].textContent;
+            addExerciseToWorkout(exerciseId, exerciseName);
+        });
+        modal.style.display = 'flex';
+    }
+    function addExerciseToWorkout(exerciseId, exerciseName) {
+        const container = document.getElementById('selectedExercisesContainer');
+        const newExercise = document.createElement('div');
+        newExercise.className = 'bg-gray-600 p-2 rounded-lg flex items-center justify-between';
+        newExercise.innerHTML = `
+            <input type="hidden" name="exerciseId" value="${exerciseId}">
+            <span>${exerciseName}</span>
+            <div class="flex items-center gap-2">
+                <input type="number" name="sets" placeholder="Sets" class="w-16 bg-gray-700 p-1 rounded text-right" value="3">
+                <input type="text" name="reps" placeholder="Reps" class="w-24 bg-gray-700 p-1 rounded text-right" value="8-12">
+            </div>
+        `;
+        container.appendChild(newExercise);
+    }
+    async function saveGymWorkout() {
+        const modal = document.getElementById('gymScheduleModal');
+        const exercises = Array.from(modal.querySelectorAll('#selectedExercisesContainer > div')).map(el => ({
+            id: el.querySelector('input[name="exerciseId"]').value,
+            name: el.querySelector('span').textContent,
+            sets: el.querySelector('input[name="sets"]').value,
+            reps: el.querySelector('input[name="reps"]').value,
+        }));
+        
+        const data = {
+            workout_name: modal.querySelector('#workoutNameInput').value,
+            day_of_week: parseInt(modal.querySelector('#workoutDayInput').value),
+            start_time: modal.querySelector('#workoutStartTimeInput').value,
+            end_time: modal.querySelector('#workoutEndTimeInput').value,
+            exercises
+        };
+        
+        if (data.workout_name && data.start_time && data.end_time && data.exercises.length > 0) {
+            await apiRequest('/api/gym/schedule', 'POST', data);
+            modal.style.display = 'none';
+            renderGymPlanner();
+        } else {
+            // Replace alert with a custom message box
+            // alert('Please fill in all fields and add at least one exercise.');
+        }
+    }
     async function renderExerciseLibrary() {
         const exercises = await apiRequest('/api/gym/exercises');
         const container = document.getElementById('gym-exercises');
